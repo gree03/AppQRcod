@@ -8,15 +8,19 @@
 </head>
 <body>
     <header>
-        <div class="support">Служба поддержки: <a href="tel:{{ support_phone }}">{{ support_phone }}</a></div>
+        <div class="container">
+            <div class="support">Служба поддержки: <a href="tel:{{ support_phone }}">{{ support_phone }}</a></div>
+        </div>
     </header>
-    <main>
+    <main class="container">
         {% block content %}{% endblock %}
     </main>
     {% if cart_total %}
     <div class="cart-sticky">
-        <span>Итого: {{ cart_total }} ₽</span>
-        <a href="{{ url_for('cart_view') }}">В корзину</a>
+        <div class="container">
+            <span>Итого: {{ cart_total }} ₽</span>
+            <a href="{{ url_for('cart_view') }}">В корзину</a>
+        </div>
     </div>
     {% endif %}
 </body>
