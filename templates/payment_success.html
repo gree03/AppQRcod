@@ -1,0 +1,6 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h1>Успех</h1>
+<p>Заказ №{{ order_id }} принят.</p>
+<a class="btn" href="{{ url_for('menu') }}">Открыть меню</a>
+{% endblock %}

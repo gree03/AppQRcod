@@ -1,0 +1,11 @@
+body{font-family:sans-serif;margin:0;padding-bottom:60px}
+header{background:#fff;padding:10px;border-bottom:1px solid #eee}
+.btn{background:#ff8000;color:#fff;padding:10px 15px;text-decoration:none;display:inline-block;border-radius:4px;margin:5px}
+.btn.disabled{opacity:.5;pointer-events:none}
+.badge{background:#ffa64d;color:#fff;padding:2px 6px;border-radius:3px;font-size:12px}
+.categories{margin:10px 0}
+.chip{padding:5px 10px;border:1px solid #ff8000;border-radius:16px;margin-right:5px;text-decoration:none;color:#ff8000}
+.chip.active{background:#ff8000;color:#fff}
+.card{border:1px solid #eee;padding:10px;margin:10px 0}
+.cart-sticky{position:fixed;bottom:0;left:0;right:0;background:#ff8000;color:#fff;padding:10px;display:flex;justify-content:space-between}
+@media(min-width:600px){.cart-sticky{position:static;background:none;color:#000;}}
