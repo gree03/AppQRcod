@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, request, session
+from flask import Flask, render_template, redirect, url_for, request, session, abort
 import random
 
 app = Flask(__name__)
@@ -33,7 +33,19 @@ def cart_total():
 
 @app.context_processor
 def inject_support():
-    return {'support_phone': SUPPORT_PHONE, 'cart_total': cart_total()}
+    return {
+        'support_phone': SUPPORT_PHONE,
+        'cart_total': cart_total(),
+        'current_table': session.get('table'),
+    }
+
+
+@app.route('/table/<int:table_id>')
+def set_table(table_id):
+    if 1 <= table_id <= 10:
+        session['table'] = str(table_id)
+        return redirect(url_for('menu'))
+    abort(404)
 
 
 @app.route('/')
@@ -89,9 +101,11 @@ def cart_remove(item_id):
 
 @app.route('/checkout', methods=['GET', 'POST'])
 def checkout():
+    table = session.get('table')
     if request.method == 'POST':
-        table = request.form.get('table')
+        table = table or request.form.get('table')
         comment = request.form.get('comment')
+        session['table'] = table
         session['order'] = {'table': table, 'comment': comment, 'items': get_cart().copy()}
         return redirect(url_for('payment'))
     if not get_cart():
@@ -102,7 +116,7 @@ def checkout():
             for item in items_list:
                 if item['id'] == item_id:
                     summary.append({'item': item, 'qty': qty, 'subtotal': item['price'] * qty})
-    return render_template('checkout.html', items=summary, total=cart_total())
+    return render_template('checkout.html', items=summary, total=cart_total(), table=table)
 
 
 @app.route('/payment')

@@ -8,7 +8,10 @@
 </head>
 <body>
     <header>
-        <div class="container">
+        <div class="container header-top">
+            {% if current_table %}
+            <div class="table-info">Стол №{{ current_table }}</div>
+            {% endif %}
             <div class="support">Служба поддержки: <a href="tel:{{ support_phone }}">{{ support_phone }}</a></div>
         </div>
     </header>
