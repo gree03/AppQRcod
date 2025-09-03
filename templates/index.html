@@ -1,0 +1,8 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h1>Выберите режим</h1>
+<div class="modes">
+    <a class="btn" href="{{ url_for('menu') }}">В ресторане</a>
+    <span class="btn disabled">Доставка <span class="badge">Временно недоступно</span></span>
+</div>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h1>Корзина</h1>
+{% if items %}
+<table>
+    <tr><th>Блюдо</th><th>Кол-во</th><th>Сумма</th></tr>
+    {% for row in items %}
+    <tr>
+        <td>{{ row.item.name }}</td>
+        <td>
+            <a href="{{ url_for('cart_remove', item_id=row.item.id) }}">-</a>
+            {{ row.qty }}
+            <a href="{{ url_for('cart_add', item_id=row.item.id) }}">+</a>
+        </td>
+        <td>{{ row.subtotal }} ₽</td>
+    </tr>
+    {% endfor %}
+</table>
+<div class="total">Итого: {{ total }} ₽</div>
+<a class="btn" href="{{ url_for('checkout') }}">Оформить</a>
+{% else %}
+<p>Корзина пуста</p>
+<a class="btn" href="{{ url_for('menu') }}">К меню</a>
+{% endif %}
+{% endblock %}

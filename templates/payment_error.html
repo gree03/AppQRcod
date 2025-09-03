@@ -1,0 +1,6 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h1>Ошибка оплаты</h1>
+<p>Произошла ошибка при обработке платежа.</p>
+<a class="btn" href="{{ url_for('payment') }}">Повторить</a>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h1>Оформление заказа</h1>
+<form method="post">
+    {% if table %}
+    <p>Стол № {{ table }}</p>
+    <input type="hidden" name="table" value="{{ table }}">
+    {% else %}
+    <label>Номер стола<input type="text" name="table" required></label>
+    {% endif %}
+    <label>Комментарий к заказу<textarea name="comment"></textarea></label>
+    <h2>Ваш заказ</h2>
+    <ul>
+    {% for row in items %}
+        <li>{{ row.item.name }} × {{ row.qty }} — {{ row.subtotal }} ₽</li>
+    {% endfor %}
+    </ul>
+    <div class="total">Итого: {{ total }} ₽</div>
+    <button class="btn" type="submit">Перейти к оплате</button>
+</form>
+{% endblock %}
