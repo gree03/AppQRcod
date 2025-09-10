@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Iterable, Optional, List
 
 
 @dataclass
@@ -43,6 +43,26 @@ def init_db(path: str) -> sqlite3.Connection:
             atmosphere TEXT,
             alcohol INTEGER,
             table_assignment INTEGER
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS invite_tokens (
+            token TEXT PRIMARY KEY,
+            uses_left INTEGER DEFAULT 1
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tables (
+            table_no INTEGER PRIMARY KEY,
+            label TEXT,
+            capacity INTEGER NOT NULL,
+            occupied INTEGER DEFAULT 0,
+            active INTEGER DEFAULT 1,
+            version INTEGER DEFAULT 1
         )
         """
     )
@@ -99,6 +119,51 @@ def invite_users(conn: sqlite3.Connection, ids: Iterable[int]) -> None:
                 "INSERT INTO users (telegram_id, invited) VALUES (?, 1)", (uid,)
             )
     conn.commit()
+
+
+def add_invite_tokens(conn: sqlite3.Connection, count: int) -> List[str]:
+    import secrets
+
+    tokens: List[str] = []
+    for _ in range(count):
+        token = secrets.token_hex(4)
+        conn.execute(
+            "INSERT INTO invite_tokens (token, uses_left) VALUES (?, 1)", (token,)
+        )
+        tokens.append(token)
+    conn.commit()
+    return tokens
+
+
+def use_invite_token(conn: sqlite3.Connection, token: str) -> bool:
+    cur = conn.execute(
+        "SELECT uses_left FROM invite_tokens WHERE token = ?", (token,)
+    )
+    row = cur.fetchone()
+    if not row or row["uses_left"] <= 0:
+        return False
+    conn.execute(
+        "UPDATE invite_tokens SET uses_left = uses_left - 1 WHERE token = ?",
+        (token,),
+    )
+    conn.commit()
+    return True
+
+
+def reset_tables_default(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    cur.execute("DELETE FROM tables")
+    for table_no in range(1, 4):
+        cur.execute(
+            "INSERT INTO tables (table_no, capacity, occupied, active, version) VALUES (?, 4, 0, 1, 1)",
+            (table_no,),
+        )
+    conn.commit()
+
+
+def get_invited_user_ids(conn: sqlite3.Connection) -> List[int]:
+    cur = conn.execute("SELECT telegram_id FROM users WHERE invited = 1")
+    return [row["telegram_id"] for row in cur.fetchall() if row["telegram_id"]]
 
 
 def set_full_name(conn: sqlite3.Connection, telegram_id: int, full_name: str) -> None:

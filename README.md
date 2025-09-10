@@ -20,3 +20,14 @@ A minimal Telegram bot for managing invited guests.
    ```
 
 The bot will create the SQLite database if it does not exist.
+
+## Admin commands
+
+Use these commands from the admin chat (`ADMIN_CHAT_ID`):
+
+- `/help` — список команд.
+- `/status` — сводка по гостям и столам.
+- `/invite_add <id...> [count=N]` — пополнение белого списка или генерация токенов.
+- `/questions` — показать текущую анкету.
+- `/set_tables` — создать 3 стола по 4 места.
+- `/broadcast <текст>` — рассылка гостям.

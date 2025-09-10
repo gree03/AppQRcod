@@ -11,6 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
 from bot.db import (
+    add_user,
     get_user,
     set_full_name,
     set_acceptance,
@@ -19,6 +20,7 @@ from bot.db import (
     set_companions,
     set_atmosphere,
     set_alcohol,
+    use_invite_token,
 )
 
 
@@ -56,8 +58,21 @@ router = Router()
 async def start(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     user = get_user(conn, message.from_user.id)
     if not user or not user.invited:
-        await message.answer("Доступ по приглашению")
-        return
+        parts = message.text.split(maxsplit=1)
+        token = parts[1] if len(parts) > 1 else None
+        if token and use_invite_token(conn, token):
+            if not user:
+                add_user(conn, message.from_user.id, message.from_user.username, True)
+            else:
+                conn.execute(
+                    "UPDATE users SET invited = 1 WHERE telegram_id = ?",
+                    (message.from_user.id,),
+                )
+                conn.commit()
+            user = get_user(conn, message.from_user.id)
+        else:
+            await message.answer("Доступ по приглашению")
+            return
     if user.onboarding_complete:
         await message.answer("Анкета уже пройдена")
         return
