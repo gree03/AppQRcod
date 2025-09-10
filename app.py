@@ -9,7 +9,10 @@ from bot.guest import router as guest_router
 
 
 async def main() -> None:
-    token = os.environ["BOT_TOKEN"]
+    token = os.environ.get("BOT_TOKEN")
+    if not token:
+        raise RuntimeError("BOT_TOKEN environment variable is missing")
+
     db_path = os.environ.get("DATABASE_PATH", "./bot.db")
     conn = init_db(db_path)
 
