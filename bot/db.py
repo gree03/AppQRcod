@@ -13,6 +13,9 @@ class User:
     username: str | None
     invited: bool
     onboarding_complete: bool
+    full_name: str | None
+    accepted: bool | None
+    guests_count: int | None
     table_assignment: int | None
 
 
@@ -28,6 +31,9 @@ def init_db(path: str) -> sqlite3.Connection:
             username TEXT,
             invited INTEGER DEFAULT 0,
             onboarding_complete INTEGER DEFAULT 0,
+            full_name TEXT,
+            accepted INTEGER,
+            guests_count INTEGER,
             table_assignment INTEGER
         )
         """
@@ -63,6 +69,9 @@ def get_user(conn: sqlite3.Connection, telegram_id: int) -> Optional[User]:
         username=row["username"],
         invited=bool(row["invited"]),
         onboarding_complete=bool(row["onboarding_complete"]),
+        full_name=row["full_name"],
+        accepted=(bool(row["accepted"]) if row["accepted"] is not None else None),
+        guests_count=row["guests_count"],
         table_assignment=row["table_assignment"],
     )
 
@@ -77,4 +86,28 @@ def invite_users(conn: sqlite3.Connection, ids: Iterable[int]) -> None:
             conn.execute(
                 "INSERT INTO users (telegram_id, invited) VALUES (?, 1)", (uid,)
             )
+    conn.commit()
+
+
+def set_full_name(conn: sqlite3.Connection, telegram_id: int, full_name: str) -> None:
+    conn.execute(
+        "UPDATE users SET full_name = ? WHERE telegram_id = ?",
+        (full_name, telegram_id),
+    )
+    conn.commit()
+
+
+def set_acceptance(conn: sqlite3.Connection, telegram_id: int, accepted: bool) -> None:
+    conn.execute(
+        "UPDATE users SET accepted = ? WHERE telegram_id = ?",
+        (int(accepted), telegram_id),
+    )
+    conn.commit()
+
+
+def set_guests_count(conn: sqlite3.Connection, telegram_id: int, count: int) -> None:
+    conn.execute(
+        "UPDATE users SET guests_count = ? WHERE telegram_id = ?",
+        (count, telegram_id),
+    )
     conn.commit()
