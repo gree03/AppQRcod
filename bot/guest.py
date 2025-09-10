@@ -53,8 +53,7 @@ router = Router()
 
 
 @router.message(Command("start"))
-async def start(message: Message, state: FSMContext) -> None:
-    conn = message.bot["conn"]
+async def start(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     user = get_user(conn, message.from_user.id)
     if not user or not user.invited:
         await message.answer("Доступ по приглашению")
@@ -67,20 +66,18 @@ async def start(message: Message, state: FSMContext) -> None:
 
 
 @router.message(Questionnaire.full_name)
-async def answer_full_name(message: Message, state: FSMContext) -> None:
-    conn = message.bot["conn"]
+async def answer_full_name(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     set_full_name(conn, message.from_user.id, message.text.strip())
     await message.answer(QUESTIONS[1].text)
     await state.set_state(Questionnaire.attending)
 
 
 @router.message(Questionnaire.attending)
-async def answer_attending(message: Message, state: FSMContext) -> None:
+async def answer_attending(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     text = message.text.strip().lower()
     if text not in {"да", "нет"}:
         await message.answer("Пожалуйста, ответьте 'Да' или 'Нет'")
         return
-    conn = message.bot["conn"]
     set_acceptance(conn, message.from_user.id, text == "да")
     await message.answer(QUESTIONS[2].text)
     await state.set_state(Questionnaire.cuisine)
@@ -90,12 +87,11 @@ CUISINE_OPTIONS = {"европейская", "азиатская", "кавказ
 
 
 @router.message(Questionnaire.cuisine)
-async def answer_cuisine(message: Message, state: FSMContext) -> None:
+async def answer_cuisine(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     text = message.text.strip().lower()
     if text not in CUISINE_OPTIONS:
         await message.answer("Выберите один из вариантов: Европейская, Азиатская, Кавказская, Без разницы")
         return
-    conn = message.bot["conn"]
     set_cuisine(conn, message.from_user.id, message.text.strip())
     await message.answer(QUESTIONS[3].text)
     await state.set_state(Questionnaire.allergies)
@@ -105,20 +101,25 @@ ALLERGY_OPTIONS = {"арахис", "лактоза", "глютен", "рыба",
 
 
 @router.message(Questionnaire.allergies)
-async def answer_allergies(message: Message, state: FSMContext) -> None:
+async def answer_allergies(
+    message: Message, state: FSMContext, conn: sqlite3.Connection
+) -> None:
     parts = [p.strip().lower() for p in message.text.split(',')]
     if not all(p in ALLERGY_OPTIONS for p in parts):
-        await message.answer("Пожалуйста, укажите варианты через запятую из списка: Арахис, Лактоза, Глютен, Рыба/морепродукты, Нет")
+        await message.answer(
+            "Пожалуйста, укажите варианты через запятую из списка: "
+            "Арахис, Лактоза, Глютен, Рыба/морепродукты, Нет"
+        )
         return
-    conn = message.bot["conn"]
-    set_allergies(conn, message.from_user.id, ",".join(p.strip() for p in message.text.split(',')))
+    set_allergies(
+        conn, message.from_user.id, ",".join(p.strip() for p in message.text.split(','))
+    )
     await message.answer(QUESTIONS[4].text)
     await state.set_state(Questionnaire.companions)
 
 
 @router.message(Questionnaire.companions)
-async def answer_companions(message: Message, state: FSMContext) -> None:
-    conn = message.bot["conn"]
+async def answer_companions(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     set_companions(conn, message.from_user.id, message.text.strip())
     await message.answer(QUESTIONS[5].text)
     await state.set_state(Questionnaire.atmosphere)
@@ -128,24 +129,22 @@ ATMOSPHERE_OPTIONS = {"тихий столик", "более общительн�
 
 
 @router.message(Questionnaire.atmosphere)
-async def answer_atmosphere(message: Message, state: FSMContext) -> None:
+async def answer_atmosphere(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     text = message.text.strip().lower()
     if text not in ATMOSPHERE_OPTIONS:
         await message.answer("Выберите: Тихий столик, Более общительный столик, Без разницы")
         return
-    conn = message.bot["conn"]
     set_atmosphere(conn, message.from_user.id, message.text.strip())
     await message.answer(QUESTIONS[6].text)
     await state.set_state(Questionnaire.alcohol)
 
 
 @router.message(Questionnaire.alcohol)
-async def answer_alcohol(message: Message, state: FSMContext) -> None:
+async def answer_alcohol(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     text = message.text.strip().lower()
     if text not in {"да", "нет"}:
         await message.answer("Пожалуйста, ответьте 'Да' или 'Нет'")
         return
-    conn = message.bot["conn"]
     set_alcohol(conn, message.from_user.id, text == "да")
     conn.execute(
         "UPDATE users SET onboarding_complete = 1 WHERE telegram_id = ?",

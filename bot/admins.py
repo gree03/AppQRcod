@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import List
+import sqlite3
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -44,10 +45,9 @@ async def cmd_help(message: Message) -> None:
 
 
 @router.message(Command("status"))
-async def cmd_status(message: Message) -> None:
+async def cmd_status(message: Message, conn: sqlite3.Connection) -> None:
     if not _is_admin(message):
         return
-    conn = message.bot["conn"]
     total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     completed = conn.execute(
         "SELECT COUNT(*) FROM users WHERE onboarding_complete = 1"
@@ -59,7 +59,7 @@ async def cmd_status(message: Message) -> None:
 
 
 @router.message(Command("invite_add"))
-async def cmd_invite_add(message: Message) -> None:
+async def cmd_invite_add(message: Message, conn: sqlite3.Connection) -> None:
     if not _is_admin(message):
         return
     parts = message.text.split()[1:]
@@ -72,7 +72,6 @@ async def cmd_invite_add(message: Message) -> None:
     if not ids:
         await message.answer("Не указаны идентификаторы")
         return
-    conn = message.bot["conn"]
     invite_users(conn, ids)
     await message.answer("ok")
 

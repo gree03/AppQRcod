@@ -11,7 +11,7 @@ A minimal Telegram bot for managing invited guests.
 2. Create `config.txt` with at least the bot token:
    ```
    BOT_TOKEN=123456:ABCDEF
-   ADMIN_CHAT_ID=0
+   ADMIN_CHAT_ID=2194158282
    # DATABASE_PATH=./bot.db  # optional
    ```
 3. Run the bot:
