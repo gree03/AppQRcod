@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import List
 
 from aiogram import Router
@@ -15,7 +14,7 @@ from bot.guest import QUESTIONS
 
 router = Router()
 
-ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", 0))
+ADMIN_CHAT_ID = 0
 
 
 def _is_admin(message: Message) -> bool:

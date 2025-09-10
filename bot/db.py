@@ -15,7 +15,11 @@ class User:
     onboarding_complete: bool
     full_name: str | None
     accepted: bool | None
-    guests_count: int | None
+    cuisine: str | None
+    allergies: str | None
+    companions: str | None
+    atmosphere: str | None
+    alcohol: bool | None
     table_assignment: int | None
 
 
@@ -33,7 +37,11 @@ def init_db(path: str) -> sqlite3.Connection:
             onboarding_complete INTEGER DEFAULT 0,
             full_name TEXT,
             accepted INTEGER,
-            guests_count INTEGER,
+            cuisine TEXT,
+            allergies TEXT,
+            companions TEXT,
+            atmosphere TEXT,
+            alcohol INTEGER,
             table_assignment INTEGER
         )
         """
@@ -71,7 +79,11 @@ def get_user(conn: sqlite3.Connection, telegram_id: int) -> Optional[User]:
         onboarding_complete=bool(row["onboarding_complete"]),
         full_name=row["full_name"],
         accepted=(bool(row["accepted"]) if row["accepted"] is not None else None),
-        guests_count=row["guests_count"],
+        cuisine=row["cuisine"],
+        allergies=row["allergies"],
+        companions=row["companions"],
+        atmosphere=row["atmosphere"],
+        alcohol=(bool(row["alcohol"]) if row["alcohol"] is not None else None),
         table_assignment=row["table_assignment"],
     )
 
@@ -105,9 +117,41 @@ def set_acceptance(conn: sqlite3.Connection, telegram_id: int, accepted: bool) -
     conn.commit()
 
 
-def set_guests_count(conn: sqlite3.Connection, telegram_id: int, count: int) -> None:
+def set_cuisine(conn: sqlite3.Connection, telegram_id: int, cuisine: str) -> None:
     conn.execute(
-        "UPDATE users SET guests_count = ? WHERE telegram_id = ?",
-        (count, telegram_id),
+        "UPDATE users SET cuisine = ? WHERE telegram_id = ?",
+        (cuisine, telegram_id),
+    )
+    conn.commit()
+
+
+def set_allergies(conn: sqlite3.Connection, telegram_id: int, allergies: str) -> None:
+    conn.execute(
+        "UPDATE users SET allergies = ? WHERE telegram_id = ?",
+        (allergies, telegram_id),
+    )
+    conn.commit()
+
+
+def set_companions(conn: sqlite3.Connection, telegram_id: int, companions: str) -> None:
+    conn.execute(
+        "UPDATE users SET companions = ? WHERE telegram_id = ?",
+        (companions, telegram_id),
+    )
+    conn.commit()
+
+
+def set_atmosphere(conn: sqlite3.Connection, telegram_id: int, atmosphere: str) -> None:
+    conn.execute(
+        "UPDATE users SET atmosphere = ? WHERE telegram_id = ?",
+        (atmosphere, telegram_id),
+    )
+    conn.commit()
+
+
+def set_alcohol(conn: sqlite3.Connection, telegram_id: int, alcohol: bool) -> None:
+    conn.execute(
+        "UPDATE users SET alcohol = ? WHERE telegram_id = ?",
+        (int(alcohol), telegram_id),
     )
     conn.commit()

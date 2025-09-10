@@ -14,7 +14,11 @@ from bot.db import (
     get_user,
     set_full_name,
     set_acceptance,
-    set_guests_count,
+    set_cuisine,
+    set_allergies,
+    set_companions,
+    set_atmosphere,
+    set_alcohol,
 )
 
 
@@ -27,14 +31,22 @@ class Question:
 QUESTIONS = [
     Question(1, "Имя и фамилия (для идентификации)."),
     Question(2, "Принимаете ли вы приглашение на 26.06.26 (Да / Нет)"),
-    Question(3, "Сколько человек будет с вами?"),
+    Question(3, "Предпочтения по кухне (Европейская/Азиатская/Кавказская/Без разницы)"),
+    Question(4, "Аллергии или ограничения (Арахис/Лактоза/Глютен/Рыба/морепродукты/Нет)"),
+    Question(5, "Хотели бы сидеть рядом с друзьями/коллегами? Укажите @username через запятую или 'Нет'"),
+    Question(6, "Предпочтения по атмосфере (Тихий столик/Более общительный столик/Без разницы)"),
+    Question(7, "Будете ли вы спиртное? (Да / Нет)"),
 ]
 
 
 class Questionnaire(StatesGroup):
     full_name = State()
     attending = State()
-    guests = State()
+    cuisine = State()
+    allergies = State()
+    companions = State()
+    atmosphere = State()
+    alcohol = State()
 
 
 router = Router()
@@ -71,18 +83,70 @@ async def answer_attending(message: Message, state: FSMContext) -> None:
     conn = message.bot["conn"]
     set_acceptance(conn, message.from_user.id, text == "да")
     await message.answer(QUESTIONS[2].text)
-    await state.set_state(Questionnaire.guests)
+    await state.set_state(Questionnaire.cuisine)
 
 
-@router.message(Questionnaire.guests)
-async def answer_guests(message: Message, state: FSMContext) -> None:
-    try:
-        count = int(message.text.strip())
-    except ValueError:
-        await message.answer("Введите число")
+CUISINE_OPTIONS = {"европейская", "азиатская", "кавказская", "без разницы"}
+
+
+@router.message(Questionnaire.cuisine)
+async def answer_cuisine(message: Message, state: FSMContext) -> None:
+    text = message.text.strip().lower()
+    if text not in CUISINE_OPTIONS:
+        await message.answer("Выберите один из вариантов: Европейская, Азиатская, Кавказская, Без разницы")
         return
     conn = message.bot["conn"]
-    set_guests_count(conn, message.from_user.id, count)
+    set_cuisine(conn, message.from_user.id, message.text.strip())
+    await message.answer(QUESTIONS[3].text)
+    await state.set_state(Questionnaire.allergies)
+
+
+ALLERGY_OPTIONS = {"арахис", "лактоза", "глютен", "рыба", "рыба/морепродукты", "морепродукты", "нет"}
+
+
+@router.message(Questionnaire.allergies)
+async def answer_allergies(message: Message, state: FSMContext) -> None:
+    parts = [p.strip().lower() for p in message.text.split(',')]
+    if not all(p in ALLERGY_OPTIONS for p in parts):
+        await message.answer("Пожалуйста, укажите варианты через запятую из списка: Арахис, Лактоза, Глютен, Рыба/морепродукты, Нет")
+        return
+    conn = message.bot["conn"]
+    set_allergies(conn, message.from_user.id, ",".join(p.strip() for p in message.text.split(',')))
+    await message.answer(QUESTIONS[4].text)
+    await state.set_state(Questionnaire.companions)
+
+
+@router.message(Questionnaire.companions)
+async def answer_companions(message: Message, state: FSMContext) -> None:
+    conn = message.bot["conn"]
+    set_companions(conn, message.from_user.id, message.text.strip())
+    await message.answer(QUESTIONS[5].text)
+    await state.set_state(Questionnaire.atmosphere)
+
+
+ATMOSPHERE_OPTIONS = {"тихий столик", "более общительный столик", "без разницы"}
+
+
+@router.message(Questionnaire.atmosphere)
+async def answer_atmosphere(message: Message, state: FSMContext) -> None:
+    text = message.text.strip().lower()
+    if text not in ATMOSPHERE_OPTIONS:
+        await message.answer("Выберите: Тихий столик, Более общительный столик, Без разницы")
+        return
+    conn = message.bot["conn"]
+    set_atmosphere(conn, message.from_user.id, message.text.strip())
+    await message.answer(QUESTIONS[6].text)
+    await state.set_state(Questionnaire.alcohol)
+
+
+@router.message(Questionnaire.alcohol)
+async def answer_alcohol(message: Message, state: FSMContext) -> None:
+    text = message.text.strip().lower()
+    if text not in {"да", "нет"}:
+        await message.answer("Пожалуйста, ответьте 'Да' или 'Нет'")
+        return
+    conn = message.bot["conn"]
+    set_alcohol(conn, message.from_user.id, text == "да")
     conn.execute(
         "UPDATE users SET onboarding_complete = 1 WHERE telegram_id = ?",
         (message.from_user.id,),
@@ -90,4 +154,3 @@ async def answer_guests(message: Message, state: FSMContext) -> None:
     conn.commit()
     await message.answer("Спасибо! Анкета завершена.")
     await state.clear()
-

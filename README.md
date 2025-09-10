@@ -8,13 +8,11 @@ A minimal Telegram bot for managing invited guests.
    ```bash
    pip install -r requirements.txt
    ```
-2. Provide a bot token via environment variable:
-   ```bash
-   export BOT_TOKEN="123456:ABCDEF"
+2. Create `config.txt` with at least the bot token:
    ```
-   Optionally, configure the SQLite database path:
-   ```bash
-   export DATABASE_PATH="./bot.db"
+   BOT_TOKEN=123456:ABCDEF
+   ADMIN_CHAT_ID=0
+   # DATABASE_PATH=./bot.db  # optional
    ```
 3. Run the bot:
    ```bash
