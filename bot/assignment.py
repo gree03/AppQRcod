@@ -1,12 +1,9 @@
 """Assignment heuristics for distributing guests among tables."""
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Sequence
-
-from sqlalchemy.orm import Session
-
-from .db import User
+from typing import Dict, Sequence
 
 
 @dataclass
@@ -14,7 +11,7 @@ class Table:
     number: int
     capacity: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.capacity <= 0:
             raise ValueError("Capacity must be positive")
 
@@ -24,30 +21,27 @@ class AssignmentResult:
     table_for_user: Dict[int, int]
 
 
-def assign_tables(session: Session, tables: Sequence[Table]) -> AssignmentResult:
-    """Greedy assignment of invited users to tables.
-
-    Users are taken in ascending order of telegram id to make the result
-    deterministic. Each table is filled before moving to the next.
-    """
-    invited_users = (
-        session.query(User)
-        .filter_by(invited=True, onboarding_complete=True, table_assignment=None)
-        .order_by(User.telegram_id)
-        .all()
+def assign_tables(conn: sqlite3.Connection, tables: Sequence[Table]) -> AssignmentResult:
+    cur = conn.execute(
+        "SELECT telegram_id FROM users WHERE invited = 1 AND onboarding_complete = 1 "
+        "AND table_assignment IS NULL ORDER BY telegram_id"
     )
+    users = [row[0] for row in cur.fetchall()]
     table_for_user: Dict[int, int] = {}
     table_iter = iter(tables)
     current = next(table_iter, None)
     filled = 0
-    for user in invited_users:
+    for uid in users:
         while current and filled >= current.capacity:
             current = next(table_iter, None)
             filled = 0
         if not current:
             break
-        user.table_assignment = current.number
-        table_for_user[user.telegram_id] = current.number
+        conn.execute(
+            "UPDATE users SET table_assignment = ? WHERE telegram_id = ?",
+            (current.number, uid),
+        )
+        table_for_user[uid] = current.number
         filled += 1
-    session.commit()
+    conn.commit()
     return AssignmentResult(table_for_user=table_for_user)

@@ -1,19 +1,14 @@
-from bot.db import create_engine_and_tables, invite_users, User
-from sqlalchemy.orm import Session
+from bot.db import init_db, invite_users
 
 
 def test_invite_users_creates_and_marks():
-    engine = create_engine_and_tables("sqlite:///:memory:")
-    session = Session(engine)
-    # initially no users
-    invite_users(session, [1, 2])
-    # Should create users
-    users = session.query(User).order_by(User.telegram_id).all()
-    assert [u.telegram_id for u in users] == [1, 2]
-    assert all(u.invited for u in users)
+    conn = init_db(":memory:")
+    invite_users(conn, [1, 2])
+    rows = conn.execute("SELECT telegram_id, invited FROM users ORDER BY telegram_id").fetchall()
+    assert [r[0] for r in rows] == [1, 2]
+    assert all(r[1] for r in rows)
 
-    # inviting existing user keeps invitation
-    invite_users(session, [2, 3])
-    users = session.query(User).order_by(User.telegram_id).all()
-    assert [u.telegram_id for u in users] == [1, 2, 3]
-    assert all(u.invited for u in users)
+    invite_users(conn, [2, 3])
+    rows = conn.execute("SELECT telegram_id, invited FROM users ORDER BY telegram_id").fetchall()
+    assert [r[0] for r in rows] == [1, 2, 3]
+    assert all(r[1] for r in rows)

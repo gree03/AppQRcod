@@ -1,85 +1,80 @@
-"""Database helpers for the Telegram bot.
-
-The module defines SQLAlchemy models and helper functions to create tables
-and interact with the database. For unit tests we use an in-memory SQLite
-engine but the configuration can point to any SQLAlchemy-supported backend.
-"""
+"""Simple SQLite helpers for the Telegram bot."""
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
-from typing import Iterable, List
-
-from sqlalchemy import (
-    Column,
-    Integer,
-    String,
-    Boolean,
-    ForeignKey,
-    create_engine,
-    select,
-)
-from sqlalchemy.orm import declarative_base, relationship, Session
-
-Base = declarative_base()
+from typing import Iterable, Optional
 
 
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True)
-    telegram_id = Column(Integer, unique=True, nullable=False)
-    username = Column(String, nullable=True)
-    invited = Column(Boolean, default=False)
-    onboarding_complete = Column(Boolean, default=False)
-    table_assignment = Column(Integer, nullable=True)
-
-    answers = relationship("Answer", back_populates="user", cascade="all, delete-orphan")
+@dataclass
+class User:
+    id: int
+    telegram_id: int
+    username: str | None
+    invited: bool
+    onboarding_complete: bool
+    table_assignment: int | None
 
 
-class Question(Base):
-    __tablename__ = "questions"
-    id = Column(Integer, primary_key=True)
-    text = Column(String, nullable=False)
-    type = Column(String, nullable=False)
-
-    answers = relationship("Answer", back_populates="question", cascade="all, delete-orphan")
-
-
-class Answer(Base):
-    __tablename__ = "answers"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    question_id = Column(Integer, ForeignKey("questions.id"))
-    text = Column(String, nullable=False)
-
-    user = relationship("User", back_populates="answers")
-    question = relationship("Question", back_populates="answers")
-
-
-def create_engine_and_tables(url: str):
-    engine = create_engine(url)
-    Base.metadata.create_all(engine)
-    return engine
+def init_db(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_id INTEGER UNIQUE,
+            username TEXT,
+            invited INTEGER DEFAULT 0,
+            onboarding_complete INTEGER DEFAULT 0,
+            table_assignment INTEGER
+        )
+        """
+    )
+    conn.commit()
+    return conn
 
 
-def add_user(session: Session, telegram_id: int, username: str | None = None, invited: bool = False) -> User:
-    user = User(telegram_id=telegram_id, username=username, invited=invited)
-    session.add(user)
-    session.commit()
-    return user
+def add_user(
+    conn: sqlite3.Connection,
+    telegram_id: int,
+    username: str | None = None,
+    invited: bool = False,
+) -> User:
+    conn.execute(
+        "INSERT INTO users (telegram_id, username, invited) VALUES (?, ?, ?)",
+        (telegram_id, username, int(invited)),
+    )
+    conn.commit()
+    return get_user(conn, telegram_id)
 
 
-def invite_users(session: Session, ids: Iterable[int]) -> None:
+def get_user(conn: sqlite3.Connection, telegram_id: int) -> Optional[User]:
+    cur = conn.execute(
+        "SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return User(
+        id=row["id"],
+        telegram_id=row["telegram_id"],
+        username=row["username"],
+        invited=bool(row["invited"]),
+        onboarding_complete=bool(row["onboarding_complete"]),
+        table_assignment=row["table_assignment"],
+    )
+
+
+def invite_users(conn: sqlite3.Connection, ids: Iterable[int]) -> None:
     for uid in ids:
-        user = session.execute(select(User).where(User.telegram_id == uid)).scalar_one_or_none()
-        if user:
-            user.invited = True
+        if get_user(conn, uid):
+            conn.execute(
+                "UPDATE users SET invited = 1 WHERE telegram_id = ?", (uid,)
+            )
         else:
-            session.add(User(telegram_id=uid, invited=True))
-    session.commit()
-
-
-def store_answer(session: Session, user: User, question: Question, text: str) -> Answer:
-    answer = Answer(user=user, question=question, text=text)
-    session.add(answer)
-    session.commit()
-    return answer
+            conn.execute(
+                "INSERT INTO users (telegram_id, invited) VALUES (?, 1)", (uid,)
+            )
+    conn.commit()

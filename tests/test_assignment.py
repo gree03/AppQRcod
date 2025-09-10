@@ -1,26 +1,21 @@
-import pytest
-
-from bot.db import create_engine_and_tables, add_user, User
+from bot.db import init_db, add_user
 from bot.assignment import Table, assign_tables
-from sqlalchemy.orm import Session
 
 
-def create_session():
-    engine = create_engine_and_tables("sqlite:///:memory:")
-    return Session(engine)
+def create_conn():
+    return init_db(":memory:")
 
 
 def test_assign_tables_greedy():
-    session = create_session()
-    # Add invited users and mark onboarding complete
+    conn = create_conn()
     for tid in [10, 11, 12, 13, 14]:
-        user = add_user(session, telegram_id=tid, invited=True)
-        user.onboarding_complete = True
-    session.commit()
+        add_user(conn, telegram_id=tid, invited=True)
+        conn.execute("UPDATE users SET onboarding_complete=1 WHERE telegram_id=?", (tid,))
+    conn.commit()
 
     tables = [Table(number=1, capacity=2), Table(number=2, capacity=2)]
-    result = assign_tables(session, tables)
+    result = assign_tables(conn, tables)
 
     assert result.table_for_user == {10: 1, 11: 1, 12: 2, 13: 2}
-    # Last user should remain unassigned due to capacity limits
-    assert session.query(User).filter_by(telegram_id=14).one().table_assignment is None
+    cur = conn.execute("SELECT table_assignment FROM users WHERE telegram_id=14")
+    assert cur.fetchone()[0] is None

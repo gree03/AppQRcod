@@ -1,2 +1,2 @@
-sqlalchemy>=1.4,<2.0
+aiogram>=3.0.0b5
 pytest
