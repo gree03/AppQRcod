@@ -45,6 +45,7 @@ ADMIN_CHAT_ID = 0
 
 class TableEdit(StatesGroup):
     waiting_label = State()
+    waiting_capacity = State()
 
 
 def _is_admin(message: Message) -> bool:
@@ -71,7 +72,12 @@ async def show_tables(msg_or_cb, conn: sqlite3.Connection) -> None:
     tables = list_tables(conn)
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=f"{t['table_no']} {t['label'] or ''}", callback_data=f"table:{t['table_no']}")]  # type: ignore[index]
+            [
+                InlineKeyboardButton(
+                    text=f"{t['table_no']} ({t['capacity']}) {t['label'] or ''}",
+                    callback_data=f"table:{t['table_no']}",
+                )
+            ]
             for t in tables
         ]
     )
@@ -83,7 +89,6 @@ async def show_tables(msg_or_cb, conn: sqlite3.Connection) -> None:
     else:
         await msg_or_cb.answer(text, reply_markup=kb)
 
-
 async def show_table_menu(msg_or_cb, table_no: int, conn: sqlite3.Connection) -> None:
     table = get_table(conn, table_no)
     if not table:
@@ -92,6 +97,7 @@ async def show_table_menu(msg_or_cb, table_no: int, conn: sqlite3.Connection) ->
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Изменить название", callback_data=f"table:{table_no}:label")],
+            [InlineKeyboardButton(text="Изменить вместимость", callback_data=f"table:{table_no}:capacity")],
             [InlineKeyboardButton(text="Гости", callback_data=f"table:{table_no}:guests")],
             [InlineKeyboardButton(text="Удалить стол", callback_data=f"table:{table_no}:del")],
             [InlineKeyboardButton(text="Назад", callback_data="tables")],
@@ -121,7 +127,10 @@ async def show_guest_list(callback: CallbackQuery, table_no: int, conn: sqlite3.
     kb_rows.append([InlineKeyboardButton(text="+", callback_data=f"addseat:{table_no}")])
     kb_rows.append([InlineKeyboardButton(text="Назад", callback_data=f"table:{table_no}")])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await callback.message.edit_text("Гости стола", reply_markup=kb)
+    await callback.message.edit_text(
+        f"Стол {table_no}: {len(guests)}/{table['capacity']} мест",
+        reply_markup=kb,
+    )
     await callback.answer()
 
 
@@ -348,6 +357,13 @@ async def cb_table(callback: CallbackQuery, state: FSMContext, conn: sqlite3.Con
                 "Новое название стола:", reply_markup=ForceReply()
             )
             await callback.answer()
+        elif action == "capacity":
+            await state.update_data(table_no=table_no)
+            await state.set_state(TableEdit.waiting_capacity)
+            await callback.message.answer(
+                "Новая вместимость стола:", reply_markup=ForceReply()
+            )
+            await callback.answer()
         elif action == "guests":
             await show_guest_list(callback, table_no, conn)
         elif action == "del":
@@ -459,6 +475,24 @@ async def set_table_label(message: Message, state: FSMContext, conn: sqlite3.Con
     await message.answer("Название обновлено")
     await show_table_menu(message, table_no, conn)
     await state.clear()
+
+
+@router.message(TableEdit.waiting_capacity)
+async def set_table_capacity(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
+    if not _is_admin(message):
+        return
+    data = await state.get_data()
+    table_no = data.get("table_no")
+    try:
+        capacity = int(message.text.strip())
+        if capacity <= 0:
+            raise ValueError
+        update_table_capacity(conn, table_no, capacity)
+        await message.answer("Вместимость обновлена")
+        await show_table_menu(message, table_no, conn)
+        await state.clear()
+    except ValueError:
+        await message.answer("Введите положительное число")
 
 
 
