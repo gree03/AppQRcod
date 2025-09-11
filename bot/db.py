@@ -20,7 +20,7 @@ class User:
     companions: str | None
     atmosphere: str | None
     alcohol: bool | None
-    table_assignment: int | None
+    table: int | None
 
 
 def init_db(path: str) -> sqlite3.Connection:
@@ -104,7 +104,7 @@ def get_user(conn: sqlite3.Connection, telegram_id: int) -> Optional[User]:
         companions=row["companions"],
         atmosphere=row["atmosphere"],
         alcohol=(bool(row["alcohol"]) if row["alcohol"] is not None else None),
-        table_assignment=row["table_assignment"],
+        table=row["table_assignment"],
     )
 
 
@@ -218,5 +218,81 @@ def set_alcohol(conn: sqlite3.Connection, telegram_id: int, alcohol: bool) -> No
     conn.execute(
         "UPDATE users SET alcohol = ? WHERE telegram_id = ?",
         (int(alcohol), telegram_id),
+    )
+    conn.commit()
+
+
+def list_tables(conn: sqlite3.Connection) -> List[sqlite3.Row]:
+    cur = conn.execute(
+        "SELECT table_no, label, capacity FROM tables ORDER BY table_no"
+    )
+    return cur.fetchall()
+
+
+def add_table(conn: sqlite3.Connection, label: str = "", capacity: int = 4) -> int:
+    cur = conn.execute("SELECT COALESCE(MAX(table_no), 0) + 1 FROM tables")
+    new_no = cur.fetchone()[0]
+    conn.execute(
+        "INSERT INTO tables (table_no, label, capacity, occupied, active, version) "
+        "VALUES (?, ?, ?, 0, 1, 1)",
+        (new_no, label, capacity),
+    )
+    conn.commit()
+    return new_no
+
+
+def update_table_label(conn: sqlite3.Connection, table_no: int, label: str) -> None:
+    conn.execute("UPDATE tables SET label = ? WHERE table_no = ?", (label, table_no))
+    conn.commit()
+
+
+def update_table_capacity(conn: sqlite3.Connection, table_no: int, capacity: int) -> None:
+    assigned = conn.execute(
+        "SELECT COUNT(*) FROM users WHERE table_assignment = ?", (table_no,)
+    ).fetchone()[0]
+    if capacity < assigned:
+        raise ValueError("Capacity less than assigned guests")
+    conn.execute(
+        "UPDATE tables SET capacity = ? WHERE table_no = ?", (capacity, table_no)
+    )
+    conn.commit()
+
+
+def get_table(conn: sqlite3.Connection, table_no: int) -> Optional[sqlite3.Row]:
+    cur = conn.execute(
+        "SELECT table_no, label, capacity FROM tables WHERE table_no = ?",
+        (table_no,),
+    )
+    return cur.fetchone()
+
+
+def get_table_guests(conn: sqlite3.Connection, table_no: int) -> List[sqlite3.Row]:
+    cur = conn.execute(
+        "SELECT telegram_id, COALESCE(full_name, username, telegram_id) AS name "
+        "FROM users WHERE table_assignment = ? ORDER BY id",
+        (table_no,),
+    )
+    return cur.fetchall()
+
+
+def get_unassigned_guests(conn: sqlite3.Connection) -> List[sqlite3.Row]:
+    cur = conn.execute(
+        "SELECT telegram_id, COALESCE(full_name, username, telegram_id) AS name "
+        "FROM users WHERE invited = 1 AND onboarding_complete = 1 "
+        "AND table_assignment IS NULL ORDER BY id"
+    )
+    return cur.fetchall()
+
+
+def assign_user_to_table(conn: sqlite3.Connection, telegram_id: int, table_no: int) -> None:
+    conn.execute(
+        "UPDATE users SET table_assignment = ? WHERE telegram_id = ?",
+        (table_no, telegram_id),
+    )
+    occ = conn.execute(
+        "SELECT COUNT(*) FROM users WHERE table_assignment = ?", (table_no,)
+    ).fetchone()[0]
+    conn.execute(
+        "UPDATE tables SET occupied = ? WHERE table_no = ?", (occ, table_no)
     )
     conn.commit()
