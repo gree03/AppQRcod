@@ -5,6 +5,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Dict, Sequence
 
+from bot.db import assign_user_to_table
+
 
 @dataclass
 class Table:
@@ -37,11 +39,7 @@ def assign_tables(conn: sqlite3.Connection, tables: Sequence[Table]) -> Assignme
             filled = 0
         if not current:
             break
-        conn.execute(
-            "UPDATE users SET table_assignment = ? WHERE telegram_id = ?",
-            (current.number, uid),
-        )
+        assign_user_to_table(conn, uid, current.number)
         table_for_user[uid] = current.number
         filled += 1
-    conn.commit()
     return AssignmentResult(table_for_user=table_for_user)

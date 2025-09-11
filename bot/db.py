@@ -21,6 +21,7 @@ class User:
     atmosphere: str | None
     alcohol: bool | None
     table: int | None
+    seat: int | None
 
 
 def init_db(path: str) -> sqlite3.Connection:
@@ -42,7 +43,8 @@ def init_db(path: str) -> sqlite3.Connection:
             companions TEXT,
             atmosphere TEXT,
             alcohol INTEGER,
-            table_assignment INTEGER
+            table_assignment INTEGER,
+            seat INTEGER
         )
         """
     )
@@ -105,6 +107,7 @@ def get_user(conn: sqlite3.Connection, telegram_id: int) -> Optional[User]:
         atmosphere=row["atmosphere"],
         alcohol=(bool(row["alcohol"]) if row["alcohol"] is not None else None),
         table=row["table_assignment"],
+        seat=row["seat"],
     )
 
 
@@ -296,8 +299,8 @@ def get_table(conn: sqlite3.Connection, table_no: int) -> Optional[sqlite3.Row]:
 
 def get_table_guests(conn: sqlite3.Connection, table_no: int) -> List[sqlite3.Row]:
     cur = conn.execute(
-        "SELECT telegram_id, COALESCE(full_name, username, telegram_id) AS name "
-        "FROM users WHERE table_assignment = ? ORDER BY id",
+        "SELECT seat, telegram_id, COALESCE(full_name, username, telegram_id) AS name "
+        "FROM users WHERE table_assignment = ? ORDER BY seat",
         (table_no,),
     )
     return cur.fetchall()
@@ -312,10 +315,37 @@ def get_unassigned_guests(conn: sqlite3.Connection) -> List[sqlite3.Row]:
     return cur.fetchall()
 
 
-def assign_user_to_table(conn: sqlite3.Connection, telegram_id: int, table_no: int) -> None:
+def assign_user_to_table(
+    conn: sqlite3.Connection, telegram_id: int, table_no: int, seat: int | None = None
+) -> None:
+    table = conn.execute(
+        "SELECT capacity FROM tables WHERE table_no = ?", (table_no,)
+    ).fetchone()
+    if not table:
+        raise ValueError("Table not found")
+    capacity = table["capacity"]
+    if seat is None:
+        taken = {
+            row["seat"]
+            for row in conn.execute(
+                "SELECT seat FROM users WHERE table_assignment = ?", (table_no,)
+            )
+            if row["seat"] is not None
+        }
+        seat = 1
+        while seat in taken:
+            seat += 1
+    if seat < 1 or seat > capacity:
+        raise ValueError("Invalid seat")
+    cur = conn.execute(
+        "SELECT COUNT(*) FROM users WHERE table_assignment = ? AND seat = ?",
+        (table_no, seat),
+    )
+    if cur.fetchone()[0]:
+        raise ValueError("Seat occupied")
     conn.execute(
-        "UPDATE users SET table_assignment = ? WHERE telegram_id = ?",
-        (table_no, telegram_id),
+        "UPDATE users SET table_assignment = ?, seat = ? WHERE telegram_id = ?",
+        (table_no, seat, telegram_id),
     )
     occ = conn.execute(
         "SELECT COUNT(*) FROM users WHERE table_assignment = ?", (table_no,)
@@ -336,7 +366,7 @@ def unassign_user(conn: sqlite3.Connection, telegram_id: int) -> None:
         return
     table_no = row["table_assignment"]
     conn.execute(
-        "UPDATE users SET table_assignment = NULL WHERE telegram_id = ?",
+        "UPDATE users SET table_assignment = NULL, seat = NULL WHERE telegram_id = ?",
         (telegram_id,),
     )
     occ = conn.execute(

@@ -123,15 +123,18 @@ async def show_guest_list(callback: CallbackQuery, table_no: int, conn: sqlite3.
         await callback.answer()
         return
     guests = get_table_guests(conn, table_no)
+    occupied = {row["seat"]: row for row in guests}
     kb_rows: List[List[InlineKeyboardButton]] = []
-    for row in guests:
-        kb_rows.append(
-            [InlineKeyboardButton(text=str(row["name"]), callback_data=f"rmguest:{table_no}:{row['telegram_id']}")]
-        )
-    for _ in range(table["capacity"] - len(guests)):
-        kb_rows.append([InlineKeyboardButton(text="Пусто", callback_data=f"delseat:{table_no}")])
-    kb_rows.append([InlineKeyboardButton(text="Добавить гостя", callback_data=f"addguest:{table_no}")])
-    kb_rows.append([InlineKeyboardButton(text="+", callback_data=f"addseat:{table_no}")])
+    for seat in range(1, table["capacity"] + 1):
+        if seat in occupied:
+            name = occupied[seat]["name"]
+            kb_rows.append(
+                [InlineKeyboardButton(text=f"{seat}. {name}", callback_data=f"rmguest:{table_no}:{seat}")]
+            )
+        else:
+            kb_rows.append(
+                [InlineKeyboardButton(text=f"{seat}. Пусто", callback_data=f"addguest:{table_no}:{seat}")]
+            )
     kb_rows.append([InlineKeyboardButton(text="Назад", callback_data=f"table:{table_no}")])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     await callback.message.edit_text(
@@ -141,10 +144,17 @@ async def show_guest_list(callback: CallbackQuery, table_no: int, conn: sqlite3.
     await callback.answer()
 
 
-async def show_available_guests(callback: CallbackQuery, table_no: int, conn: sqlite3.Connection) -> None:
+async def show_available_guests(
+    callback: CallbackQuery, table_no: int, seat: int, conn: sqlite3.Connection
+) -> None:
     guests = get_unassigned_guests(conn)
     kb_rows = [
-        [InlineKeyboardButton(text=str(g["name"]), callback_data=f"assign:{table_no}:{g['telegram_id']}")]
+        [
+            InlineKeyboardButton(
+                text=str(g["name"]),
+                callback_data=f"assign:{table_no}:{seat}:{g['telegram_id']}",
+            )
+        ]
         for g in guests
     ]
     kb_rows.append([InlineKeyboardButton(text="Назад", callback_data=f"table:{table_no}:guests")])
@@ -387,40 +397,17 @@ async def cb_addguest(callback: CallbackQuery, conn: sqlite3.Connection) -> None
     if not _is_admin(callback.message):
         await callback.answer()
         return
-    table_no = int(callback.data.split(":")[1])
-    table = get_table(conn, table_no)
-    guests = get_table_guests(conn, table_no)
-    if len(guests) >= table["capacity"]:
-        await callback.answer("Нет свободных мест", show_alert=True)
+    _, table_no, seat = callback.data.split(":")
+    table_no = int(table_no)
+    seat = int(seat)
+    cur = conn.execute(
+        "SELECT 1 FROM users WHERE table_assignment = ? AND seat = ?",
+        (table_no, seat),
+    )
+    if cur.fetchone():
+        await callback.answer("Место занято", show_alert=True)
         return
-    await show_available_guests(callback, table_no, conn)
-
-
-@router.callback_query(F.data.startswith("addseat:"))
-async def cb_addseat(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
-    if not _is_admin(callback.message):
-        await callback.answer()
-        return
-    table_no = int(callback.data.split(":")[1])
-    table = get_table(conn, table_no)
-    update_table_capacity(conn, table_no, table["capacity"] + 1)
-    await callback.answer("Место добавлено")
-    await show_guest_list(callback, table_no, conn)
-
-
-@router.callback_query(F.data.startswith("delseat:"))
-async def cb_delseat(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
-    if not _is_admin(callback.message):
-        await callback.answer()
-        return
-    table_no = int(callback.data.split(":")[1])
-    table = get_table(conn, table_no)
-    try:
-        update_table_capacity(conn, table_no, table["capacity"] - 1)
-        await callback.answer("Место удалено")
-    except ValueError:
-        await callback.answer("Нельзя удалить: есть гости", show_alert=True)
-    await show_guest_list(callback, table_no, conn)
+    await show_available_guests(callback, table_no, seat, conn)
 
 
 @router.callback_query(F.data.startswith("assign:"))
@@ -428,8 +415,8 @@ async def cb_assign(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
     if not _is_admin(callback.message):
         await callback.answer()
         return
-    _, table_no, uid = callback.data.split(":")
-    assign_user_to_table(conn, int(uid), int(table_no))
+    _, table_no, seat, uid = callback.data.split(":")
+    assign_user_to_table(conn, int(uid), int(table_no), int(seat))
     await callback.answer("Гость назначен")
     await show_guest_list(callback, int(table_no), conn)
 
@@ -439,20 +426,30 @@ async def cb_rmguest(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
     if not _is_admin(callback.message):
         await callback.answer()
         return
-    _, table_no, uid = callback.data.split(":")
-    user = get_user(conn, int(uid))
-    name = user.full_name or user.username or str(uid)
+    _, table_no, seat = callback.data.split(":")
+    row = conn.execute(
+        "SELECT telegram_id, COALESCE(full_name, username, telegram_id) AS name "
+        "FROM users WHERE table_assignment = ? AND seat = ?",
+        (int(table_no), int(seat)),
+    ).fetchone()
+    if not row:
+        await callback.answer()
+        return
+    uid = row["telegram_id"]
+    name = row["name"]
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Удалить", callback_data=f"rmguest_confirm:{table_no}:{uid}"
+                    text="Удалить", callback_data=f"rmguest_confirm:{table_no}:{seat}"
                 )
             ],
             [InlineKeyboardButton(text="Отмена", callback_data=f"table:{table_no}:guests")],
         ]
     )
-    await callback.message.edit_text(f"Удалить {name} со стола?", reply_markup=kb)
+    await callback.message.edit_text(
+        f"Удалить {name} с места {seat}?", reply_markup=kb
+    )
     await callback.answer()
 
 
@@ -461,9 +458,16 @@ async def cb_rmguest_confirm(callback: CallbackQuery, conn: sqlite3.Connection) 
     if not _is_admin(callback.message):
         await callback.answer()
         return
-    _, table_no, uid = callback.data.split(":")
-    unassign_user(conn, int(uid))
-    await callback.answer("Гость удалён")
+    _, table_no, seat = callback.data.split(":")
+    row = conn.execute(
+        "SELECT telegram_id FROM users WHERE table_assignment = ? AND seat = ?",
+        (int(table_no), int(seat)),
+    ).fetchone()
+    if row:
+        unassign_user(conn, row["telegram_id"])
+        await callback.answer("Гость удалён")
+    else:
+        await callback.answer()
     await show_guest_list(callback, int(table_no), conn)
 
 
