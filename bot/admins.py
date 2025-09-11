@@ -45,7 +45,6 @@ ADMIN_CHAT_ID = 0
 
 class TableEdit(StatesGroup):
     waiting_label = State()
-    waiting_capacity = State()
 
 
 def _is_admin(message: Message) -> bool:
@@ -93,7 +92,6 @@ async def show_table_menu(msg_or_cb, table_no: int, conn: sqlite3.Connection) ->
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Изменить название", callback_data=f"table:{table_no}:label")],
-            [InlineKeyboardButton(text="Изменить вместимость", callback_data=f"table:{table_no}:cap")],
             [InlineKeyboardButton(text="Гости", callback_data=f"table:{table_no}:guests")],
             [InlineKeyboardButton(text="Удалить стол", callback_data=f"table:{table_no}:del")],
             [InlineKeyboardButton(text="Назад", callback_data="tables")],
@@ -118,7 +116,8 @@ async def show_guest_list(callback: CallbackQuery, table_no: int, conn: sqlite3.
             [InlineKeyboardButton(text=str(row["name"]), callback_data=f"rmguest:{table_no}:{row['telegram_id']}")]
         )
     for _ in range(table["capacity"] - len(guests)):
-        kb_rows.append([InlineKeyboardButton(text="Пусто", callback_data=f"addguest:{table_no}")])
+        kb_rows.append([InlineKeyboardButton(text="Пусто", callback_data=f"slot:{table_no}")])
+    kb_rows.append([InlineKeyboardButton(text="+", callback_data=f"addseat:{table_no}")])
     kb_rows.append([InlineKeyboardButton(text="Назад", callback_data=f"table:{table_no}")])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     await callback.message.edit_text("Гости стола", reply_markup=kb)
@@ -249,8 +248,21 @@ async def cb_guest(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
         return
     name = user.full_name or user.username or str(uid)
     table = user.table if user.table is not None else "не назначен"
-    quest = "пройдена" if user.onboarding_complete else "не пройдена"
-    text = f"{name}\nАнкета: {quest}\nСтол: {table}"
+    lines = [name, f"Стол: {table}"]
+    if user.onboarding_complete:
+        lines.extend(
+            [
+                f"Приглашение: {'Да' if user.accepted else 'Нет'}",
+                f"Кухня: {user.cuisine or '-'}",
+                f"Аллергии: {user.allergies or '-'}",
+                f"Компаньоны: {user.companions or '-'}",
+                f"Атмосфера: {user.atmosphere or '-'}",
+                f"Спиртное: {'Да' if user.alcohol else 'Нет'}",
+            ]
+        )
+    else:
+        lines.append("Анкета: не пройдена")
+    text = "\n".join(lines)
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Удалить из приглашённых", callback_data=f"guestdel:{uid}")],
@@ -335,13 +347,6 @@ async def cb_table(callback: CallbackQuery, state: FSMContext, conn: sqlite3.Con
                 "Новое название стола:", reply_markup=ForceReply()
             )
             await callback.answer()
-        elif action == "cap":
-            await state.update_data(table_no=table_no)
-            await state.set_state(TableEdit.waiting_capacity)
-            await callback.message.answer(
-                "Новая вместимость стола:", reply_markup=ForceReply()
-            )
-            await callback.answer()
         elif action == "guests":
             await show_guest_list(callback, table_no, conn)
         elif action == "del":
@@ -360,6 +365,50 @@ async def cb_addguest(callback: CallbackQuery, conn: sqlite3.Connection) -> None
         return
     table_no = int(callback.data.split(":")[1])
     await show_available_guests(callback, table_no, conn)
+
+
+@router.callback_query(F.data.startswith("slot:"))
+async def cb_slot(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    table_no = int(callback.data.split(":")[1])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Назначить гостя", callback_data=f"addguest:{table_no}")],
+            [InlineKeyboardButton(text="Удалить место", callback_data=f"delseat:{table_no}")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"table:{table_no}:guests")],
+        ]
+    )
+    await callback.message.edit_text("Свободное место", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("addseat:"))
+async def cb_addseat(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    table_no = int(callback.data.split(":")[1])
+    table = get_table(conn, table_no)
+    update_table_capacity(conn, table_no, table["capacity"] + 1)
+    await callback.answer("Место добавлено")
+    await show_guest_list(callback, table_no, conn)
+
+
+@router.callback_query(F.data.startswith("delseat:"))
+async def cb_delseat(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    table_no = int(callback.data.split(":")[1])
+    table = get_table(conn, table_no)
+    try:
+        update_table_capacity(conn, table_no, table["capacity"] - 1)
+        await callback.answer("Место удалено")
+    except ValueError:
+        await callback.answer("Нельзя удалить: есть гости", show_alert=True)
+    await show_guest_list(callback, table_no, conn)
 
 
 @router.callback_query(F.data.startswith("assign:"))
@@ -423,20 +472,6 @@ async def set_table_label(message: Message, state: FSMContext, conn: sqlite3.Con
     await state.clear()
 
 
-@router.message(TableEdit.waiting_capacity)
-async def set_table_capacity(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
-    if not _is_admin(message):
-        return
-    data = await state.get_data()
-    table_no = data.get("table_no")
-    try:
-        cap = int(message.text.strip())
-        update_table_capacity(conn, table_no, cap)
-        await message.answer("Вместимость обновлена")
-        await show_table_menu(message, table_no, conn)
-        await state.clear()
-    except ValueError:
-        await message.answer("Введите число не меньше текущего количества гостей")
 
 
 @router.message(Command("set_rules"))
