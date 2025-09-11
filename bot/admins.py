@@ -24,6 +24,7 @@ from bot.db import (
     add_table,
     update_table_label,
     update_table_capacity,
+    delete_table,
     get_table,
     get_table_guests,
     get_unassigned_guests,
@@ -73,6 +74,7 @@ async def show_table_menu(msg_or_cb, table_no: int, conn: sqlite3.Connection) ->
             [InlineKeyboardButton(text="Изменить название", callback_data=f"table:{table_no}:label")],
             [InlineKeyboardButton(text="Изменить вместимость", callback_data=f"table:{table_no}:cap")],
             [InlineKeyboardButton(text="Гости", callback_data=f"table:{table_no}:guests")],
+            [InlineKeyboardButton(text="Удалить стол", callback_data=f"table:{table_no}:del")],
             [InlineKeyboardButton(text="Назад", callback_data="tables")],
         ]
     )
@@ -246,6 +248,13 @@ async def cb_table(callback: CallbackQuery, state: FSMContext, conn: sqlite3.Con
             await callback.answer()
         elif action == "guests":
             await show_guest_list(callback, table_no, conn)
+        elif action == "del":
+            try:
+                delete_table(conn, table_no)
+                await callback.answer("Стол удалён")
+                await show_tables(callback, conn)
+            except ValueError:
+                await callback.answer("Нельзя удалить: есть гости", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("addguest:"))

@@ -258,6 +258,16 @@ def update_table_capacity(conn: sqlite3.Connection, table_no: int, capacity: int
     conn.commit()
 
 
+def delete_table(conn: sqlite3.Connection, table_no: int) -> None:
+    cur = conn.execute(
+        "SELECT COUNT(*) FROM users WHERE table_assignment = ?", (table_no,)
+    )
+    if cur.fetchone()[0] > 0:
+        raise ValueError("Table has assigned guests")
+    conn.execute("DELETE FROM tables WHERE table_no = ?", (table_no,))
+    conn.commit()
+
+
 def get_table(conn: sqlite3.Connection, table_no: int) -> Optional[sqlite3.Row]:
     cur = conn.execute(
         "SELECT table_no, label, capacity FROM tables WHERE table_no = ?",
