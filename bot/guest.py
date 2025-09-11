@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import sqlite3
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -53,6 +55,13 @@ class Questionnaire(StatesGroup):
 
 router = Router()
 
+ADMIN_CHAT_ID = 0
+
+
+def _user_label(message: Message) -> str:
+    user = message.from_user
+    return user.full_name or (user.username and f"@{user.username}") or str(user.id)
+
 
 @router.message(Command("start"))
 async def start(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
@@ -76,6 +85,9 @@ async def start(message: Message, state: FSMContext, conn: sqlite3.Connection) -
     if user.onboarding_complete:
         await message.answer("Анкета уже пройдена")
         return
+    await message.bot.send_message(
+        ADMIN_CHAT_ID, f"{_user_label(message)} начал анкету"
+    )
     await message.answer(QUESTIONS[0].text)
     await state.set_state(Questionnaire.full_name)
 
@@ -83,6 +95,10 @@ async def start(message: Message, state: FSMContext, conn: sqlite3.Connection) -
 @router.message(Questionnaire.full_name)
 async def answer_full_name(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     set_full_name(conn, message.from_user.id, message.text.strip())
+    await message.bot.send_message(
+        ADMIN_CHAT_ID,
+        f"{_user_label(message)}: {QUESTIONS[0].text} -> {message.text.strip()}",
+    )
     await message.answer(QUESTIONS[1].text)
     await state.set_state(Questionnaire.attending)
 
@@ -94,6 +110,10 @@ async def answer_attending(message: Message, state: FSMContext, conn: sqlite3.Co
         await message.answer("Пожалуйста, ответьте 'Да' или 'Нет'")
         return
     set_acceptance(conn, message.from_user.id, text == "да")
+    await message.bot.send_message(
+        ADMIN_CHAT_ID,
+        f"{_user_label(message)}: {QUESTIONS[1].text} -> {message.text.strip()}",
+    )
     await message.answer(QUESTIONS[2].text)
     await state.set_state(Questionnaire.cuisine)
 
@@ -108,6 +128,10 @@ async def answer_cuisine(message: Message, state: FSMContext, conn: sqlite3.Conn
         await message.answer("Выберите один из вариантов: Европейская, Азиатская, Кавказская, Без разницы")
         return
     set_cuisine(conn, message.from_user.id, message.text.strip())
+    await message.bot.send_message(
+        ADMIN_CHAT_ID,
+        f"{_user_label(message)}: {QUESTIONS[2].text} -> {message.text.strip()}",
+    )
     await message.answer(QUESTIONS[3].text)
     await state.set_state(Questionnaire.allergies)
 
@@ -129,6 +153,10 @@ async def answer_allergies(
     set_allergies(
         conn, message.from_user.id, ",".join(p.strip() for p in message.text.split(','))
     )
+    await message.bot.send_message(
+        ADMIN_CHAT_ID,
+        f"{_user_label(message)}: {QUESTIONS[3].text} -> {message.text.strip()}",
+    )
     await message.answer(QUESTIONS[4].text)
     await state.set_state(Questionnaire.companions)
 
@@ -136,6 +164,10 @@ async def answer_allergies(
 @router.message(Questionnaire.companions)
 async def answer_companions(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
     set_companions(conn, message.from_user.id, message.text.strip())
+    await message.bot.send_message(
+        ADMIN_CHAT_ID,
+        f"{_user_label(message)}: {QUESTIONS[4].text} -> {message.text.strip()}",
+    )
     await message.answer(QUESTIONS[5].text)
     await state.set_state(Questionnaire.atmosphere)
 
@@ -150,6 +182,10 @@ async def answer_atmosphere(message: Message, state: FSMContext, conn: sqlite3.C
         await message.answer("Выберите: Тихий столик, Более общительный столик, Без разницы")
         return
     set_atmosphere(conn, message.from_user.id, message.text.strip())
+    await message.bot.send_message(
+        ADMIN_CHAT_ID,
+        f"{_user_label(message)}: {QUESTIONS[5].text} -> {message.text.strip()}",
+    )
     await message.answer(QUESTIONS[6].text)
     await state.set_state(Questionnaire.alcohol)
 
@@ -166,5 +202,12 @@ async def answer_alcohol(message: Message, state: FSMContext, conn: sqlite3.Conn
         (message.from_user.id,),
     )
     conn.commit()
+    await message.bot.send_message(
+        ADMIN_CHAT_ID,
+        f"{_user_label(message)}: {QUESTIONS[6].text} -> {message.text.strip()}",
+    )
+    await message.bot.send_message(
+        ADMIN_CHAT_ID, f"{_user_label(message)} завершил анкету"
+    )
     await message.answer("Спасибо! Анкета завершена.")
     await state.clear()

@@ -116,7 +116,8 @@ async def show_guest_list(callback: CallbackQuery, table_no: int, conn: sqlite3.
             [InlineKeyboardButton(text=str(row["name"]), callback_data=f"rmguest:{table_no}:{row['telegram_id']}")]
         )
     for _ in range(table["capacity"] - len(guests)):
-        kb_rows.append([InlineKeyboardButton(text="Пусто", callback_data=f"slot:{table_no}")])
+        kb_rows.append([InlineKeyboardButton(text="Пусто", callback_data=f"delseat:{table_no}")])
+    kb_rows.append([InlineKeyboardButton(text="Добавить гостя", callback_data=f"addguest:{table_no}")])
     kb_rows.append([InlineKeyboardButton(text="+", callback_data=f"addseat:{table_no}")])
     kb_rows.append([InlineKeyboardButton(text="Назад", callback_data=f"table:{table_no}")])
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
@@ -364,24 +365,12 @@ async def cb_addguest(callback: CallbackQuery, conn: sqlite3.Connection) -> None
         await callback.answer()
         return
     table_no = int(callback.data.split(":")[1])
-    await show_available_guests(callback, table_no, conn)
-
-
-@router.callback_query(F.data.startswith("slot:"))
-async def cb_slot(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
-    if not _is_admin(callback.message):
-        await callback.answer()
+    table = get_table(conn, table_no)
+    guests = get_table_guests(conn, table_no)
+    if len(guests) >= table["capacity"]:
+        await callback.answer("Нет свободных мест", show_alert=True)
         return
-    table_no = int(callback.data.split(":")[1])
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Назначить гостя", callback_data=f"addguest:{table_no}")],
-            [InlineKeyboardButton(text="Удалить место", callback_data=f"delseat:{table_no}")],
-            [InlineKeyboardButton(text="Назад", callback_data=f"table:{table_no}:guests")],
-        ]
-    )
-    await callback.message.edit_text("Свободное место", reply_markup=kb)
-    await callback.answer()
+    await show_available_guests(callback, table_no, conn)
 
 
 @router.callback_query(F.data.startswith("addseat:"))
