@@ -543,13 +543,23 @@ async def notify_tables_datetime(message: Message, state: FSMContext) -> None:
 
 
 @router.message(NotifyTables.waiting_comment)
-async def notify_tables_comment(message: Message, state: FSMContext) -> None:
+async def notify_tables_comment(
+    message: Message, state: FSMContext, conn: sqlite3.Connection
+) -> None:
     if not _is_admin(message):
         return
     await state.update_data(comment=message.text.strip())
     data = await state.get_data()
     dt = data.get("datetime", "")
     comment = data.get("comment", "")
+    rows = get_assigned_users(conn)
+    summary = "\n".join(
+        f"{r['name']} — стол {r['table_assignment']}" for r in rows
+    )
+    if summary:
+        await message.answer("Гости и столы:\n" + summary)
+    else:
+        await message.answer("Нет гостей для оповещения")
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Да", callback_data="notify_confirm:yes")],
