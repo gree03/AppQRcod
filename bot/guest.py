@@ -10,7 +10,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.db import (
     add_user,
@@ -65,6 +65,23 @@ def _user_label(message: Message) -> str:
 
 @router.message(Command("start"))
 async def start(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
+    # Notify admins about any /start call with add option
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Добавить человека",
+                    callback_data=f"whitelist:{message.from_user.id}",
+                )
+            ]
+        ]
+    )
+    await message.bot.send_message(
+        ADMIN_CHAT_ID,
+        f"/start от {message.from_user.id} @{message.from_user.username or ''}",
+        reply_markup=kb,
+    )
+
     user = get_user(conn, message.from_user.id)
     if not user or not user.invited:
         parts = message.text.split(maxsplit=1)

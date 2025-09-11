@@ -59,6 +59,17 @@ def _is_admin(message: Message) -> bool:
     return message.chat.id == ADMIN_CHAT_ID
 
 
+@router.callback_query(F.data.startswith("whitelist:"))
+async def cb_whitelist(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if callback.message.chat.id != ADMIN_CHAT_ID:
+        await callback.answer()
+        return
+    uid = int(callback.data.split(":", 1)[1])
+    invite_users(conn, [uid])
+    await callback.message.edit_text(f"Добавлен пользователь {uid}")
+    await callback.answer("ok")
+
+
 async def show_guests(msg_or_cb, conn: sqlite3.Connection) -> None:
     guests = list_guests(conn)
     kb = InlineKeyboardMarkup(

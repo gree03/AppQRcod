@@ -3,11 +3,11 @@ from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 
-from bot import admins
+from bot import admins, guest, export
 from bot.admins import router as admin_router
 from bot.db import init_db
 from bot.guest import router as guest_router
-from bot import guest
+from bot.export import router as export_router
 
 
 def load_config(path: str = "config.txt") -> dict:
@@ -39,7 +39,9 @@ async def main() -> None:
     dp["conn"] = conn
     admins.ADMIN_CHAT_ID = admin_chat
     guest.ADMIN_CHAT_ID = admin_chat
+    export.ADMIN_CHAT_ID = admin_chat
     dp.include_router(admin_router)
+    dp.include_router(export_router)
     dp.include_router(guest_router)
 
     await dp.start_polling(bot)
