@@ -15,6 +15,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from bot.db import (
     add_user,
     get_user,
+    invite_users,
     set_full_name,
     set_acceptance,
     set_cuisine,
@@ -45,6 +46,7 @@ QUESTIONS = [
 
 class Questionnaire(StatesGroup):
     full_name = State()
+    awaiting_invite = State()
     attending = State()
     cuisine = State()
     allergies = State()
@@ -65,7 +67,31 @@ def _user_label(message: Message) -> str:
 
 @router.message(Command("start"))
 async def start(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
-    # Notify admins about any /start call with add option
+    user = get_user(conn, message.from_user.id)
+    if user and user.onboarding_complete:
+        await message.answer("Анкета уже пройдена")
+        return
+    if not user:
+        add_user(conn, message.from_user.id, message.from_user.username)
+    parts = message.text.split(maxsplit=1)
+    token = parts[1] if len(parts) > 1 else None
+    await state.update_data(token=token)
+    await message.answer("Пожалуйста, укажите ваше ФИО")
+    await state.set_state(Questionnaire.full_name)
+
+
+@router.message(Questionnaire.full_name)
+async def answer_full_name(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
+    full_name = message.text.strip()
+    set_full_name(conn, message.from_user.id, full_name)
+    user = get_user(conn, message.from_user.id)
+    data = await state.get_data()
+    token = data.get("token")
+    invited = user.invited if user else False
+    if token and use_invite_token(conn, token):
+        invite_users(conn, [message.from_user.id])
+        invited = True
+
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -78,46 +104,16 @@ async def start(message: Message, state: FSMContext, conn: sqlite3.Connection) -
     )
     await message.bot.send_message(
         ADMIN_CHAT_ID,
-        f"/start от {message.from_user.id} @{message.from_user.username or ''}",
+        f"ID: {message.from_user.id}\n@{message.from_user.username or ''}\nФИО: {full_name}",
         reply_markup=kb,
     )
 
-    user = get_user(conn, message.from_user.id)
-    if not user or not user.invited:
-        parts = message.text.split(maxsplit=1)
-        token = parts[1] if len(parts) > 1 else None
-        if token and use_invite_token(conn, token):
-            if not user:
-                add_user(conn, message.from_user.id, message.from_user.username, True)
-            else:
-                conn.execute(
-                    "UPDATE users SET invited = 1 WHERE telegram_id = ?",
-                    (message.from_user.id,),
-                )
-                conn.commit()
-            user = get_user(conn, message.from_user.id)
-        else:
-            await message.answer("Доступ по приглашению")
-            return
-    if user.onboarding_complete:
-        await message.answer("Анкета уже пройдена")
-        return
-    await message.bot.send_message(
-        ADMIN_CHAT_ID, f"{_user_label(message)} начал анкету"
-    )
-    await message.answer(QUESTIONS[0].text)
-    await state.set_state(Questionnaire.full_name)
-
-
-@router.message(Questionnaire.full_name)
-async def answer_full_name(message: Message, state: FSMContext, conn: sqlite3.Connection) -> None:
-    set_full_name(conn, message.from_user.id, message.text.strip())
-    await message.bot.send_message(
-        ADMIN_CHAT_ID,
-        f"{_user_label(message)}: {QUESTIONS[0].text} -> {message.text.strip()}",
-    )
-    await message.answer(QUESTIONS[1].text)
-    await state.set_state(Questionnaire.attending)
+    if invited:
+        await message.answer(QUESTIONS[1].text)
+        await state.set_state(Questionnaire.attending)
+    else:
+        await message.answer("Спасибо, ожидайте подтверждения")
+        await state.set_state(Questionnaire.awaiting_invite)
 
 
 @router.message(Questionnaire.attending)

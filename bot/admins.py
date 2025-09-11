@@ -16,6 +16,7 @@ from aiogram.types import (
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.base import StorageKey
 
 from bot.db import (
     invite_users,
@@ -36,7 +37,7 @@ from bot.db import (
     uninvite_user,
     unassign_user,
 )
-from bot.guest import QUESTIONS
+from bot.guest import QUESTIONS, Questionnaire
 
 
 router = Router()
@@ -60,7 +61,11 @@ def _is_admin(message: Message) -> bool:
 
 
 @router.callback_query(F.data.startswith("whitelist:"))
-async def cb_whitelist(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+async def cb_whitelist(
+    callback: CallbackQuery,
+    conn: sqlite3.Connection,
+    state: FSMContext,
+) -> None:
     if callback.message.chat.id != ADMIN_CHAT_ID:
         await callback.answer()
         return
@@ -68,6 +73,17 @@ async def cb_whitelist(callback: CallbackQuery, conn: sqlite3.Connection) -> Non
     invite_users(conn, [uid])
     await callback.message.edit_text(f"Добавлен пользователь {uid}")
     await callback.answer("ok")
+
+    user_ctx = FSMContext(
+        state.storage, key=StorageKey(bot_id=callback.bot.id, chat_id=uid, user_id=uid)
+    )
+    if await user_ctx.get_state() == Questionnaire.awaiting_invite.state:
+        await callback.bot.send_message(
+            uid,
+            "Приносим извинения, изначально вас не было в списке. Продолжим анкету.",
+        )
+        await user_ctx.set_state(Questionnaire.attending)
+        await callback.bot.send_message(uid, QUESTIONS[1].text)
 
 
 async def show_guests(msg_or_cb, conn: sqlite3.Connection) -> None:
