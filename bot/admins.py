@@ -29,6 +29,7 @@ from bot.db import (
     get_table,
     get_table_guests,
     get_unassigned_guests,
+    get_assigned_users,
     assign_user_to_table,
     list_guests,
     get_user,
@@ -46,6 +47,12 @@ ADMIN_CHAT_ID = 0
 class TableEdit(StatesGroup):
     waiting_label = State()
     waiting_capacity = State()
+
+
+class NotifyTables(StatesGroup):
+    waiting_datetime = State()
+    waiting_comment = State()
+    confirm = State()
 
 
 def _is_admin(message: Message) -> bool:
@@ -516,9 +523,79 @@ async def cmd_assign_dry(message: Message) -> None:
 
 
 @router.message(Command("notify_tables"))
-async def cmd_notify_tables(message: Message) -> None:
-    if _is_admin(message):
-        await message.answer("Команда пока не реализована")
+async def cmd_notify_tables(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message):
+        return
+    await state.set_state(NotifyTables.waiting_datetime)
+    await message.answer("Дата и время мероприятия:", reply_markup=ForceReply())
+
+
+@router.message(NotifyTables.waiting_datetime)
+async def notify_tables_datetime(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message):
+        return
+    await state.update_data(datetime=message.text.strip())
+    await state.set_state(NotifyTables.waiting_comment)
+    await message.answer(
+        "Комментарий для гостей (или '-' если нет):",
+        reply_markup=ForceReply(),
+    )
+
+
+@router.message(NotifyTables.waiting_comment)
+async def notify_tables_comment(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message):
+        return
+    await state.update_data(comment=message.text.strip())
+    data = await state.get_data()
+    dt = data.get("datetime", "")
+    comment = data.get("comment", "")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Да", callback_data="notify_confirm:yes")],
+            [InlineKeyboardButton(text="Нет", callback_data="notify_confirm:no")],
+        ]
+    )
+    await message.answer(
+        f"Отправить уведомление гостям?\nВремя и дата: {dt}\nКомментарий: {comment}",
+        reply_markup=kb,
+    )
+    await state.set_state(NotifyTables.confirm)
+
+
+@router.callback_query(F.data.startswith("notify_confirm:"))
+async def cb_notify_confirm(
+    callback: CallbackQuery, state: FSMContext, conn: sqlite3.Connection
+) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    action = callback.data.split(":")[1]
+    data = await state.get_data()
+    if action == "yes":
+        dt = data.get("datetime", "")
+        comment = data.get("comment", "")
+        rows = get_assigned_users(conn)
+        for row in rows:
+            uid = row["telegram_id"]
+            table_no = row["table_assignment"]
+            text = f"Ваш стол: {table_no}\nВремя и дата: {dt}"
+            if comment and comment != "-":
+                text += f"\n{comment}"
+            try:
+                await callback.bot.send_message(uid, text)
+            except Exception:
+                continue
+        await callback.message.edit_text("Уведомления отправлены")
+        await state.clear()
+        await callback.answer()
+    else:
+        await state.clear()
+        await state.set_state(NotifyTables.waiting_datetime)
+        await callback.message.answer(
+            "Дата и время мероприятия:", reply_markup=ForceReply()
+        )
+        await callback.answer()
 
 
 @router.message(Command("export"))
