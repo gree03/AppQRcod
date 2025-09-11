@@ -56,6 +56,11 @@ class NotifyTables(StatesGroup):
     confirm = State()
 
 
+class Broadcast(StatesGroup):
+    waiting_message = State()
+    confirm = State()
+
+
 def _is_admin(message: Message) -> bool:
     return message.chat.id == ADMIN_CHAT_ID
 
@@ -202,7 +207,7 @@ async def cmd_help(message: Message) -> None:
         "/guest — список гостей.\n"
         "/questions — показать текущую анкету.\n"
         "/set_tables — настроить количество столов.\n"
-        "/broadcast <текст> — рассылка гостям.\n"
+        "/broadcast — рассылка гостям.\n"
         "/set_rules — правила группировки.\n"
         "/assign — выполнить распределение.\n"
         "/assign_dry — сухой прогон.\n"
@@ -669,18 +674,55 @@ async def cmd_unban(message: Message) -> None:
 
 
 @router.message(Command("broadcast"))
-async def cmd_broadcast(message: Message, conn: sqlite3.Connection) -> None:
+async def broadcast_start(message: Message, state: FSMContext) -> None:
     if not _is_admin(message):
         return
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("Нужно указать текст")
+    await state.set_state(Broadcast.waiting_message)
+    await message.answer("Пришлите сообщение для рассылки")
+
+
+@router.message(Broadcast.waiting_message)
+async def broadcast_preview(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message):
         return
-    text = parts[1]
+    await state.update_data(message_id=message.message_id)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Отправить", callback_data="broadcast:send")],
+            [InlineKeyboardButton(text="Отмена", callback_data="broadcast:cancel")],
+        ]
+    )
+    await message.copy_to(message.chat.id, reply_markup=kb)
+    await state.set_state(Broadcast.confirm)
+
+
+@router.callback_query(Broadcast.confirm, F.data == "broadcast:send")
+async def broadcast_send(
+    callback: CallbackQuery, state: FSMContext, conn: sqlite3.Connection
+) -> None:
+    if callback.message.chat.id != ADMIN_CHAT_ID:
+        await callback.answer()
+        return
+    data = await state.get_data()
+    message_id = data.get("message_id")
     for uid in get_invited_user_ids(conn):
         try:
-            await message.bot.send_message(uid, text)
+            await callback.bot.copy_message(uid, ADMIN_CHAT_ID, message_id)
         except Exception:
             continue
-    await message.answer("Рассылка отправлена")
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("Рассылка отправлена")
+    await state.clear()
+    await callback.answer()
+
+
+@router.callback_query(Broadcast.confirm, F.data == "broadcast:cancel")
+async def broadcast_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    if callback.message.chat.id != ADMIN_CHAT_ID:
+        await callback.answer()
+        return
+    await callback.message.edit_reply_markup()
+    await callback.message.answer("Рассылка отменена")
+    await state.clear()
+    await callback.answer()
 
