@@ -169,8 +169,9 @@ def get_invited_user_ids(conn: sqlite3.Connection) -> List[int]:
 def get_assigned_users(conn: sqlite3.Connection) -> List[sqlite3.Row]:
     """Return guests that already have table assignments."""
     cur = conn.execute(
-        "SELECT telegram_id, table_assignment FROM users "
-        "WHERE table_assignment IS NOT NULL"
+        "SELECT telegram_id, table_assignment, "
+        "COALESCE(full_name, username, CAST(telegram_id AS TEXT)) AS name "
+        "FROM users WHERE table_assignment IS NOT NULL"
     )
     return cur.fetchall()
 

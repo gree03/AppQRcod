@@ -576,6 +576,7 @@ async def cb_notify_confirm(
         dt = data.get("datetime", "")
         comment = data.get("comment", "")
         rows = get_assigned_users(conn)
+        lines = []
         for row in rows:
             uid = row["telegram_id"]
             table_no = row["table_assignment"]
@@ -586,7 +587,11 @@ async def cb_notify_confirm(
                 await callback.bot.send_message(uid, text)
             except Exception:
                 continue
-        await callback.message.edit_text("Уведомления отправлены")
+            lines.append(f"{row['name']} — стол {table_no}")
+        summary = "\n".join(lines) if lines else "Нет гостей для оповещения"
+        await callback.message.edit_text(
+            f"Уведомления отправлены\n{summary}"
+        )
         await state.clear()
         await callback.answer()
     else:
