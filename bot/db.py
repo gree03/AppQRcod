@@ -166,6 +166,14 @@ def get_invited_user_ids(conn: sqlite3.Connection) -> List[int]:
     return [row["telegram_id"] for row in cur.fetchall() if row["telegram_id"]]
 
 
+def list_guests(conn: sqlite3.Connection) -> List[sqlite3.Row]:
+    cur = conn.execute(
+        "SELECT telegram_id, COALESCE(full_name, username, telegram_id) AS name "
+        "FROM users WHERE invited = 1 ORDER BY id"
+    )
+    return cur.fetchall()
+
+
 def set_full_name(conn: sqlite3.Connection, telegram_id: int, full_name: str) -> None:
     conn.execute(
         "UPDATE users SET full_name = ? WHERE telegram_id = ?",
@@ -304,5 +312,36 @@ def assign_user_to_table(conn: sqlite3.Connection, telegram_id: int, table_no: i
     ).fetchone()[0]
     conn.execute(
         "UPDATE tables SET occupied = ? WHERE table_no = ?", (occ, table_no)
+    )
+    conn.commit()
+
+
+def unassign_user(conn: sqlite3.Connection, telegram_id: int) -> None:
+    cur = conn.execute(
+        "SELECT table_assignment FROM users WHERE telegram_id = ?",
+        (telegram_id,),
+    )
+    row = cur.fetchone()
+    if not row or row["table_assignment"] is None:
+        return
+    table_no = row["table_assignment"]
+    conn.execute(
+        "UPDATE users SET table_assignment = NULL WHERE telegram_id = ?",
+        (telegram_id,),
+    )
+    occ = conn.execute(
+        "SELECT COUNT(*) FROM users WHERE table_assignment = ?", (table_no,)
+    ).fetchone()[0]
+    conn.execute(
+        "UPDATE tables SET occupied = ? WHERE table_no = ?", (occ, table_no)
+    )
+    conn.commit()
+
+
+def uninvite_user(conn: sqlite3.Connection, telegram_id: int) -> None:
+    unassign_user(conn, telegram_id)
+    conn.execute(
+        "UPDATE users SET invited = 0 WHERE telegram_id = ?",
+        (telegram_id,),
     )
     conn.commit()

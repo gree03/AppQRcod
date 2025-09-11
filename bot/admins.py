@@ -12,6 +12,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     CallbackQuery,
+    ForceReply,
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -29,6 +30,10 @@ from bot.db import (
     get_table_guests,
     get_unassigned_guests,
     assign_user_to_table,
+    list_guests,
+    get_user,
+    uninvite_user,
+    unassign_user,
 )
 from bot.guest import QUESTIONS
 
@@ -45,6 +50,22 @@ class TableEdit(StatesGroup):
 
 def _is_admin(message: Message) -> bool:
     return message.chat.id == ADMIN_CHAT_ID
+
+
+async def show_guests(msg_or_cb, conn: sqlite3.Connection) -> None:
+    guests = list_guests(conn)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=str(g["name"]), callback_data=f"guest:{g['telegram_id']}")]
+            for g in guests
+        ]
+    )
+    text = "Гости:" if guests else "Список гостей пуст"
+    if isinstance(msg_or_cb, CallbackQuery):
+        await msg_or_cb.message.edit_text(text, reply_markup=kb)
+        await msg_or_cb.answer()
+    else:
+        await msg_or_cb.answer(text, reply_markup=kb)
 
 
 async def show_tables(msg_or_cb, conn: sqlite3.Connection) -> None:
@@ -93,7 +114,9 @@ async def show_guest_list(callback: CallbackQuery, table_no: int, conn: sqlite3.
     guests = get_table_guests(conn, table_no)
     kb_rows: List[List[InlineKeyboardButton]] = []
     for row in guests:
-        kb_rows.append([InlineKeyboardButton(text=str(row["name"]), callback_data="noop")])
+        kb_rows.append(
+            [InlineKeyboardButton(text=str(row["name"]), callback_data=f"rmguest:{table_no}:{row['telegram_id']}")]
+        )
     for _ in range(table["capacity"] - len(guests)):
         kb_rows.append([InlineKeyboardButton(text="Пусто", callback_data=f"addguest:{table_no}")])
     kb_rows.append([InlineKeyboardButton(text="Назад", callback_data=f"table:{table_no}")])
@@ -123,6 +146,7 @@ async def cmd_help(message: Message) -> None:
         "/help — список команд.\n"
         "/status — сводка.\n"
         "/invite_add <id...> — пополнение белого списка.\n"
+        "/guest — список гостей.\n"
         "/questions — показать текущую анкету.\n"
         "/set_tables — настроить количество столов.\n"
         "/broadcast <текст> — рассылка гостям.\n"
@@ -198,6 +222,74 @@ async def cmd_invite_add(message: Message, conn: sqlite3.Connection) -> None:
         await message.answer("\n".join(lines))
 
 
+@router.message(Command("guest"))
+async def cmd_guest(message: Message, conn: sqlite3.Connection) -> None:
+    if not _is_admin(message):
+        return
+    await show_guests(message, conn)
+
+
+@router.callback_query(F.data == "guestlist")
+async def cb_guestlist(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    await show_guests(callback, conn)
+
+
+@router.callback_query(F.data.startswith("guest:"))
+async def cb_guest(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    uid = int(callback.data.split(":")[1])
+    user = get_user(conn, uid)
+    if not user:
+        await callback.answer()
+        return
+    name = user.full_name or user.username or str(uid)
+    table = user.table if user.table is not None else "не назначен"
+    quest = "пройдена" if user.onboarding_complete else "не пройдена"
+    text = f"{name}\nАнкета: {quest}\nСтол: {table}"
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Удалить из приглашённых", callback_data=f"guestdel:{uid}")],
+            [InlineKeyboardButton(text="Назад", callback_data="guestlist")],
+        ]
+    )
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("guestdel:"))
+async def cb_guestdel(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    uid = int(callback.data.split(":")[1])
+    user = get_user(conn, uid)
+    name = user.full_name or user.username or str(uid)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Да", callback_data=f"guestdelconf:{uid}")],
+            [InlineKeyboardButton(text="Нет", callback_data=f"guest:{uid}")],
+        ]
+    )
+    await callback.message.edit_text(f"Удалить {name} из приглашённых?", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("guestdelconf:"))
+async def cb_guestdelconf(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    uid = int(callback.data.split(":")[1])
+    uninvite_user(conn, uid)
+    await callback.answer("Гость удалён")
+    await show_guests(callback, conn)
+
+
 @router.message(Command("questions"))
 async def cmd_questions(message: Message) -> None:
     if not _is_admin(message):
@@ -239,12 +331,16 @@ async def cb_table(callback: CallbackQuery, state: FSMContext, conn: sqlite3.Con
         if action == "label":
             await state.update_data(table_no=table_no)
             await state.set_state(TableEdit.waiting_label)
-            await callback.message.answer("Новое название стола:")
+            await callback.message.answer(
+                "Новое название стола:", reply_markup=ForceReply()
+            )
             await callback.answer()
         elif action == "cap":
             await state.update_data(table_no=table_no)
             await state.set_state(TableEdit.waiting_capacity)
-            await callback.message.answer("Новая вместимость стола:")
+            await callback.message.answer(
+                "Новая вместимость стола:", reply_markup=ForceReply()
+            )
             await callback.answer()
         elif action == "guests":
             await show_guest_list(callback, table_no, conn)
@@ -274,6 +370,39 @@ async def cb_assign(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
     _, table_no, uid = callback.data.split(":")
     assign_user_to_table(conn, int(uid), int(table_no))
     await callback.answer("Гость назначен")
+    await show_guest_list(callback, int(table_no), conn)
+
+
+@router.callback_query(F.data.startswith("rmguest:"))
+async def cb_rmguest(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    _, table_no, uid = callback.data.split(":")
+    user = get_user(conn, int(uid))
+    name = user.full_name or user.username or str(uid)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Удалить", callback_data=f"rmguest_confirm:{table_no}:{uid}"
+                )
+            ],
+            [InlineKeyboardButton(text="Отмена", callback_data=f"table:{table_no}:guests")],
+        ]
+    )
+    await callback.message.edit_text(f"Удалить {name} со стола?", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rmguest_confirm:"))
+async def cb_rmguest_confirm(callback: CallbackQuery, conn: sqlite3.Connection) -> None:
+    if not _is_admin(callback.message):
+        await callback.answer()
+        return
+    _, table_no, uid = callback.data.split(":")
+    unassign_user(conn, int(uid))
+    await callback.answer("Гость удалён")
     await show_guest_list(callback, int(table_no), conn)
 
 
