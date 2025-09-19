@@ -5,6 +5,7 @@ import logging
 from datetime import date
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.bot import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
@@ -63,7 +64,10 @@ async def set_bot_commands(bot: Bot) -> None:
 
 async def main() -> None:
     settings = get_settings()
-    bot = Bot(token=settings.bot_token, parse_mode=ParseMode.HTML)
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher(storage=MemoryStorage())
 
     schedule_repo = ScheduleRepository(settings.schedule_path)
