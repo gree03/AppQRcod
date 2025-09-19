@@ -7,15 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-WEEK_SOURCE_URL = (
-    "https://www.bsau.ru/obrazovanie/raspisanie/?FAKULTET=1257&NAPR=48&KURS=3&LEVEL_EDUCATION=165&FORM_EDUCATION=169"
-)
+CONFIG_FILE_NAME = "config.txt"
 
 
 @dataclass(frozen=True)
 class Settings:
     bot_token: str
-    week_source_url: str
     schedule_path: Path
     users_path: Path
     timezone: ZoneInfo
@@ -23,15 +20,42 @@ class Settings:
     daily_push_minute: int = 0
 
 
+def _load_bot_token(config_path: Path) -> str:
+    if not config_path.exists():
+        raise RuntimeError(
+            f"Файл {CONFIG_FILE_NAME} с токеном бота не найден. Создайте его в корне проекта."
+        )
+
+    token: str | None = None
+    for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if "=" in line:
+            key, value = line.split("=", 1)
+            if key.strip().lower() in {"bot_token", "token"}:
+                token = value.strip().strip("\"'")
+                break
+        else:
+            token = line.strip("\"'")
+            break
+
+    if not token:
+        raise RuntimeError(
+            f"Не найден токен бота в файле {CONFIG_FILE_NAME}. Укажите его в формате BOT_TOKEN=..."
+        )
+
+    return token
+
+
 @lru_cache
 def get_settings() -> Settings:
-    """Load application settings from environment variables."""
+    """Load application settings using ``config.txt`` and optional environment overrides."""
     base_dir = Path(__file__).resolve().parent.parent
     data_dir = base_dir / "data"
 
-    token = os.environ.get("BOT_TOKEN")
-    if not token:
-        raise RuntimeError("Environment variable BOT_TOKEN is required to start the bot.")
+    token = _load_bot_token(base_dir / CONFIG_FILE_NAME)
 
     tz_name = os.environ.get("BOT_TIMEZONE", "Asia/Yekaterinburg")
     try:
@@ -44,11 +68,10 @@ def get_settings() -> Settings:
 
     return Settings(
         bot_token=token,
-        week_source_url=WEEK_SOURCE_URL,
         schedule_path=data_dir / "schedule.json",
         users_path=data_dir / "users.json",
         timezone=timezone,
     )
 
 
-__all__ = ["Settings", "get_settings", "WEEK_SOURCE_URL"]
+__all__ = ["CONFIG_FILE_NAME", "Settings", "get_settings"]

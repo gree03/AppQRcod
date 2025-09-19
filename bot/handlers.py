@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from datetime import date, timedelta
 from typing import Any
 
@@ -21,50 +20,31 @@ from .keyboards import (
 from .repositories import ScheduleRepository, UserRepository
 from .states import EditScheduleStates
 from .utils import (
-    calculate_week_number,
     format_schedule_day,
     format_weeks,
+    get_academic_week_number,
     get_day_name_for_date,
     parse_weeks,
     pretty_day_name,
 )
-from .week_fetcher import fetch_current_week
 
 router = Router()
-logger = logging.getLogger(__name__)
 
 
 async def _show_schedule_for_date(
     message: Message,
     schedule_repo: ScheduleRepository,
-    settings: Settings,
     target_date: date,
 ) -> None:
     schedule = schedule_repo.load()
-    try:
-        current_week = await fetch_current_week(settings.week_source_url)
-        logger.debug("Fetched current academic week: %s", current_week)
-    except Exception as exc:  # pragma: no cover - network failure branch
-        logger.exception("Failed to fetch current academic week: %s", exc)
-        week_number: int | None = None
-        notice = (
-            "⚠️ Не удалось определить текущую учебную неделю. "
-            "Показаны все занятия выбранного дня."
-        )
-    else:
-        week_number = calculate_week_number(current_week, date.today(), target_date)
-        notice = ""
+    week_number = get_academic_week_number(target_date)
 
     day_name = get_day_name_for_date(target_date)
     text = format_schedule_day(
         day_name,
         week_number,
         schedule,
-        show_all_when_week_missing=True,
     )
-
-    if notice:
-        text = f"{text}\n\n{notice}"
 
     await message.answer(text, reply_markup=main_menu_keyboard())
 
@@ -94,7 +74,8 @@ async def handle_today(
     schedule_repo: ScheduleRepository,
     settings: Settings,
 ) -> None:
-    await _show_schedule_for_date(message, schedule_repo, settings, date.today())
+    del settings
+    await _show_schedule_for_date(message, schedule_repo, date.today())
 
 
 @router.message(Command("tomorrow"))
@@ -105,10 +86,10 @@ async def handle_tomorrow(
     schedule_repo: ScheduleRepository,
     settings: Settings,
 ) -> None:
+    del settings
     await _show_schedule_for_date(
         message,
         schedule_repo,
-        settings,
         date.today() + timedelta(days=1),
     )
 

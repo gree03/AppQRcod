@@ -15,8 +15,11 @@ from bot.config import Settings, get_settings
 from bot.handlers import router
 from bot.keyboards import main_menu_keyboard
 from bot.repositories import ScheduleRepository, UserRepository
-from bot.utils import format_schedule_day, get_day_name_for_date
-from bot.week_fetcher import fetch_current_week
+from bot.utils import (
+    format_schedule_day,
+    get_academic_week_number,
+    get_day_name_for_date,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,24 +31,16 @@ async def broadcast_daily_schedule(
     schedule_repo: ScheduleRepository,
     user_repo: UserRepository,
 ) -> None:
+    del settings
     schedule = schedule_repo.load()
-    try:
-        week = await fetch_current_week(settings.week_source_url)
-    except Exception as exc:  # pragma: no cover - network failure branch
-        logger.exception("Failed to fetch academic week for broadcast: %s", exc)
-        week = None
+    week = get_academic_week_number(date.today())
 
     day_name = get_day_name_for_date(date.today())
     text = format_schedule_day(
         day_name,
         week,
         schedule,
-        show_all_when_week_missing=True,
     )
-    if week is None:
-        text += (
-            "\n\n⚠️ Не удалось автоматически определить номер учебной недели."
-        )
 
     users = user_repo.list_users()
     for chat_id in users:

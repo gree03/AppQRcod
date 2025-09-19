@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterable, List, Sequence
 
 from .repositories import ScheduleData
@@ -16,6 +16,9 @@ DAY_INDEX_TO_NAME = {
 }
 
 DAY_ALIASES = {name.lower(): name for name in DAY_INDEX_TO_NAME.values()}
+
+ACADEMIC_YEAR_START_MONTH = 9
+ACADEMIC_YEAR_START_DAY = 1
 
 
 def get_day_name_for_date(target_date: date) -> str:
@@ -36,14 +39,27 @@ def normalize_day_name(day: str) -> str:
     return DAY_ALIASES[key]
 
 
-def calculate_week_number(current_week: int, base_date: date, target_date: date) -> int:
-    """Return academic week number for the target date based on the current week."""
-    days_diff = (target_date - base_date).days
-    if days_diff <= 0:
-        return current_week
+def get_academic_year_start(target_date: date) -> date:
+    """Return the first Monday of the academic year for the provided date."""
+    year = target_date.year
+    start_candidate = date(year, ACADEMIC_YEAR_START_MONTH, ACADEMIC_YEAR_START_DAY)
+    if target_date < start_candidate:
+        year -= 1
+        start_candidate = date(year, ACADEMIC_YEAR_START_MONTH, ACADEMIC_YEAR_START_DAY)
 
-    week_offset = (base_date.weekday() + days_diff) // 7
-    return current_week + week_offset
+    weekday = start_candidate.weekday()
+    offset = (7 - weekday) % 7
+    return start_candidate + timedelta(days=offset)
+
+
+def get_academic_week_number(target_date: date) -> int:
+    """Return the academic week number counting from the first Monday of September."""
+    start = get_academic_year_start(target_date)
+    if target_date < start:
+        return 1
+
+    days_passed = (target_date - start).days
+    return days_passed // 7 + 1
 
 
 def format_weeks(weeks: Iterable[int]) -> str:
@@ -150,9 +166,10 @@ def format_schedule_day(
 
 
 __all__ = [
-    "calculate_week_number",
     "format_schedule_day",
     "format_weeks",
+    "get_academic_week_number",
+    "get_academic_year_start",
     "get_day_name_for_date",
     "normalize_day_name",
     "parse_weeks",
