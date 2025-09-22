@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Iterable, List, Sequence
+from html import escape
+from typing import Any, Iterable, List, Sequence
 
 from .repositories import ScheduleData
 
@@ -19,6 +20,8 @@ DAY_ALIASES = {name.lower(): name for name in DAY_INDEX_TO_NAME.values()}
 
 ACADEMIC_YEAR_START_MONTH = 9
 ACADEMIC_YEAR_START_DAY = 1
+
+_LESSON_INDENT = "&nbsp;" * 4
 
 
 def get_day_name_for_date(target_date: date) -> str:
@@ -112,6 +115,89 @@ def parse_weeks(value: str, *, min_week: int = 1, max_week: int = 30) -> List[in
     return filtered
 
 
+def _week_phrase(week_number: int | None) -> str:
+    if week_number is None:
+        return "номер учебной недели не определён"
+    return f"{week_number}-я учебная неделя"
+
+
+def _filter_events_for_week(
+    events: list[dict[str, Any]],
+    week_number: int | None,
+    *,
+    show_all_when_week_missing: bool = False,
+) -> list[dict[str, Any]]:
+    if week_number is None:
+        return events if show_all_when_week_missing else []
+    return [event for event in events if week_number in event.get("weeks", [])]
+
+
+def _format_lesson_block(index: int, lesson: dict[str, Any]) -> List[str]:
+    subject = escape(str(lesson.get("subject") or "Без названия"))
+    time = escape(str(lesson.get("time") or "—"))
+    lines: List[str] = [f"<b>{index}. {subject}</b>"]
+    lines.append(f"{_LESSON_INDENT}⏰ {time}")
+
+    group = lesson.get("group")
+    if group:
+        lines.append(f"{_LESSON_INDENT}👥 {escape(str(group))}")
+
+    room = lesson.get("room")
+    if room:
+        lines.append(f"{_LESSON_INDENT}📍 {escape(str(room))}")
+
+    teacher = lesson.get("teacher")
+    if teacher:
+        lines.append(f"{_LESSON_INDENT}👨‍🏫 {escape(str(teacher))}")
+
+    weeks_text = escape(format_weeks(lesson.get("weeks", [])))
+    lines.append(f"{_LESSON_INDENT}🗓️ Недели: <code>{weeks_text}</code>")
+    return lines
+
+
+def _format_day_lines(
+    day: str,
+    week_number: int | None,
+    schedule: ScheduleData,
+    *,
+    show_all_when_week_missing: bool = False,
+    header_template: str | None = None,
+    empty_message: str = "Пар нет.",
+) -> List[str]:
+    normalized_day = normalize_day_name(day)
+    events = schedule.get(normalized_day, [])
+    filtered_events = _filter_events_for_week(
+        events, week_number, show_all_when_week_missing=show_all_when_week_missing
+    )
+
+    title = escape(pretty_day_name(normalized_day))
+    week_text = escape(_week_phrase(week_number))
+
+    if header_template is None:
+        header = f"<b>Расписание на {title}</b>\n<i>{week_text}</i>"
+    else:
+        header = header_template.format(title=title, week_phrase=week_text)
+
+    lines: List[str] = [header]
+
+    if not filtered_events:
+        lines.append("")
+        if week_number is None and not show_all_when_week_missing:
+            lines.append("Нет данных для отображения без номера недели.")
+        else:
+            lines.append(empty_message)
+        return lines
+
+    lines.append("")
+    for index, lesson in enumerate(filtered_events, start=1):
+        lines.extend(_format_lesson_block(index, lesson))
+        lines.append("")
+
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def format_schedule_day(
     day: str,
     week_number: int | None,
@@ -119,54 +205,39 @@ def format_schedule_day(
     *,
     show_all_when_week_missing: bool = False,
 ) -> str:
-    normalized_day = normalize_day_name(day)
-    events = schedule.get(normalized_day, [])
+    lines = _format_day_lines(
+        day,
+        week_number,
+        schedule,
+        show_all_when_week_missing=show_all_when_week_missing,
+    )
+    return "\n".join(lines).strip()
 
-    if week_number is None and show_all_when_week_missing:
-        filtered_events = events
-    elif week_number is None:
-        filtered_events = []
-    else:
-        filtered_events = [
-            event for event in events if week_number in event.get("weeks", [])
-        ]
 
-    title = pretty_day_name(normalized_day)
-    if week_number is None:
-        header = f"Расписание на {title} (номер учебной недели не определён):"
-    else:
-        header = f"Расписание на {title}, {week_number} учебная неделя:"
+def format_schedule_week(week_number: int, schedule: ScheduleData) -> str:
+    lines: List[str] = [
+        f"<b>Расписание на {escape(str(week_number))}-ю учебную неделю</b>",
+        "",
+    ]
+    for index in range(7):
+        day = DAY_INDEX_TO_NAME[index]
+        day_lines = _format_day_lines(
+            day,
+            week_number,
+            schedule,
+            header_template="<b>{title}</b>",
+        )
+        lines.extend(day_lines)
+        lines.append("")
 
-    if not filtered_events:
-        if week_number is None and not show_all_when_week_missing:
-            return header + "\nНет данных для отображения без номера недели."
-        return header + "\nПар нет."
-
-    lines = [header]
-    for index, lesson in enumerate(filtered_events, start=1):
-        group = lesson.get("group")
-        subject_line = f"{index}. {lesson['time']} — {lesson['subject']}"
-        if group:
-            subject_line += f" ({group})"
-
-        details = []
-        room = lesson.get("room")
-        if room:
-            details.append(f"ауд. {room}")
-        teacher = lesson.get("teacher")
-        if teacher:
-            details.append(teacher)
-
-        lines.append(subject_line)
-        if details:
-            lines.append("    " + ", ".join(details))
-        lines.append(f"    Недели: {format_weeks(lesson.get('weeks', []))}")
-
-    return "\n".join(lines)
+    if lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines).strip()
 
 
 __all__ = [
     "format_schedule_day",
+    "format_schedule_week",
     "format_weeks",
     "get_academic_week_number",
     "get_academic_year_start",

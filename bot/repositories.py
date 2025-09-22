@@ -226,33 +226,122 @@ class ScheduleRepository:
     def list_days(self) -> Iterable[str]:
         return self.load().keys()
 
+DEFAULT_REMINDERS = {"morning": False, "evening": False}
+
 
 class UserRepository:
-    """Simple JSON-based storage for chat identifiers."""
+    """JSON-based storage for chat identifiers and reminder preferences."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
         self._path.parent.mkdir(parents=True, exist_ok=True)
         if not self._path.exists():
-            self.save([])
+            self._save_entries([])
 
-    def _load(self) -> List[int]:
+    def _empty_entry(self, chat_id: int) -> Dict[str, Any]:
+        entry = {"chat_id": int(chat_id), "reminders": dict(DEFAULT_REMINDERS)}
+        return entry
+
+    def _load_entries(self) -> List[Dict[str, Any]]:
         with self._path.open("r", encoding="utf-8") as fp:
-            data = json.load(fp)
-        return list(data)
+            try:
+                raw = json.load(fp)
+            except json.JSONDecodeError:
+                return []
 
-    def save(self, users: Iterable[int]) -> None:
+        if not isinstance(raw, list):
+            return []
+
+        entries: List[Dict[str, Any]] = []
+        for item in raw:
+            if isinstance(item, int):
+                entries.append(self._empty_entry(item))
+                continue
+            if not isinstance(item, dict):
+                continue
+
+            chat_id = item.get("chat_id")
+            try:
+                chat_id_int = int(chat_id)
+            except (TypeError, ValueError):
+                continue
+
+            entry = self._empty_entry(chat_id_int)
+            reminders = item.get("reminders")
+            if isinstance(reminders, dict):
+                for key in entry["reminders"].keys():
+                    if key in reminders:
+                        entry["reminders"][key] = bool(reminders[key])
+            entries.append(entry)
+
+        unique: Dict[int, Dict[str, Any]] = {}
+        for entry in entries:
+            unique[entry["chat_id"]] = entry
+        return list(unique.values())
+
+    def _save_entries(self, entries: Iterable[Dict[str, Any]]) -> None:
         with self._path.open("w", encoding="utf-8") as fp:
-            json.dump(list(dict.fromkeys(users)), fp, ensure_ascii=False, indent=2)
+            json.dump(list(entries), fp, ensure_ascii=False, indent=2)
+
+    def _ensure_entry(
+        self, chat_id: int, entries: List[Dict[str, Any]] | None = None
+    ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        chat_id = int(chat_id)
+        if entries is None:
+            entries = self._load_entries()
+        for entry in entries:
+            if entry["chat_id"] == chat_id:
+                return entries, entry
+        entry = self._empty_entry(chat_id)
+        entries.append(entry)
+        return entries, entry
 
     def add_user(self, chat_id: int) -> None:
-        users = self._load()
-        if chat_id not in users:
-            users.append(chat_id)
-            self.save(users)
+        entries, _ = self._ensure_entry(chat_id)
+        self._save_entries(entries)
 
     def list_users(self) -> List[int]:
-        return self._load()
+        return [entry["chat_id"] for entry in self._load_entries()]
+
+    def get_reminders(self, chat_id: int) -> Dict[str, bool]:
+        entries, entry = self._ensure_entry(chat_id)
+        self._save_entries(entries)
+        return dict(entry["reminders"])
+
+    def set_reminder(self, chat_id: int, kind: str, enabled: bool) -> Dict[str, bool]:
+        if kind not in DEFAULT_REMINDERS:
+            raise KeyError(f"Неизвестный тип напоминания: {kind}")
+        entries = self._load_entries()
+        entries, entry = self._ensure_entry(chat_id, entries)
+        entry["reminders"][kind] = bool(enabled)
+        self._save_entries(entries)
+        return dict(entry["reminders"])
+
+    def toggle_reminder(self, chat_id: int, kind: str) -> Dict[str, bool]:
+        if kind not in DEFAULT_REMINDERS:
+            raise KeyError(f"Неизвестный тип напоминания: {kind}")
+        entries = self._load_entries()
+        entries, entry = self._ensure_entry(chat_id, entries)
+        entry["reminders"][kind] = not entry["reminders"].get(kind, False)
+        self._save_entries(entries)
+        return dict(entry["reminders"])
+
+    def clear_reminders(self, chat_id: int) -> Dict[str, bool]:
+        entries = self._load_entries()
+        entries, entry = self._ensure_entry(chat_id, entries)
+        for key in DEFAULT_REMINDERS:
+            entry["reminders"][key] = False
+        self._save_entries(entries)
+        return dict(entry["reminders"])
+
+    def list_reminder_chats(self, kind: str) -> List[int]:
+        if kind not in DEFAULT_REMINDERS:
+            raise KeyError(f"Неизвестный тип напоминания: {kind}")
+        return [
+            entry["chat_id"]
+            for entry in self._load_entries()
+            if entry["reminders"].get(kind)
+        ]
 
 
 __all__ = ["ScheduleRepository", "UserRepository", "ScheduleData"]

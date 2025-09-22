@@ -4,23 +4,34 @@ from datetime import date, timedelta
 from typing import Any
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .callbacks import DayCallback, EventCallback, FieldCallback, WeekCallback
+from .callbacks import (
+    DayCallback,
+    EventCallback,
+    FieldCallback,
+    ReminderToggleCallback,
+    WeekCallback,
+    WeekViewCallback,
+)
 from .config import Settings
 from .keyboards import (
     build_day_keyboard,
     build_event_keyboard,
     build_field_keyboard,
+    build_reminders_keyboard,
     build_week_keyboard,
+    build_week_view_keyboard,
     main_menu_keyboard,
 )
 from .repositories import ScheduleRepository, UserRepository
 from .states import EditScheduleStates
 from .utils import (
     format_schedule_day,
+    format_schedule_week,
     format_weeks,
     get_academic_week_number,
     get_day_name_for_date,
@@ -29,6 +40,24 @@ from .utils import (
 )
 
 router = Router()
+
+
+def _format_reminders_message(reminders: dict[str, bool]) -> str:
+    morning = "✅ включено" if reminders.get("morning") else "❌ выключено"
+    evening = "✅ включено" if reminders.get("evening") else "❌ выключено"
+    lines = [
+        "<b>Напоминания о расписании</b>",
+        "",
+        f"⏰ <b>07:00</b> — на сегодня: {morning}",
+        f"🌙 <b>20:00</b> — на завтра: {evening}",
+        "",
+        (
+            "Напоминания работают и в беседах: бот отправит расписание "
+            "автоматически."
+        ),
+        "Используйте кнопки ниже, чтобы включить или отключить нужные напоминания.",
+    ]
+    return "\n".join(lines)
 
 
 async def _show_schedule_for_date(
@@ -60,6 +89,8 @@ async def handle_start(
         "Доступные команды:\n"
         "• /сегодня — расписание на сегодня\n"
         "• /завтра — расписание на завтра\n"
+        "• /неделя — расписание на всю неделю\n"
+        "• /notify — управление напоминаниями\n"
         "• /edit — изменить расписание (доступно через кнопки)\n"
         "• /cancel — отменить редактирование"
     )
@@ -92,6 +123,87 @@ async def handle_tomorrow(
         schedule_repo,
         date.today() + timedelta(days=1),
     )
+
+
+@router.message(Command("week"))
+@router.message(Command("неделя"))
+@router.message(F.text.casefold() == "расписание на неделю")
+async def handle_week_schedule(
+    message: Message,
+    schedule_repo: ScheduleRepository,
+) -> None:
+    schedule = schedule_repo.load()
+    week_number = get_academic_week_number(date.today())
+    text = (
+        format_schedule_week(week_number, schedule)
+        + "\n\n<em>Выберите нужную учебную неделю с помощью кнопок ниже.</em>"
+    )
+    await message.answer(
+        text,
+        reply_markup=build_week_view_keyboard(week_number),
+    )
+
+
+@router.callback_query(WeekViewCallback.filter())
+async def handle_week_schedule_choice(
+    callback: CallbackQuery,
+    callback_data: WeekViewCallback,
+    schedule_repo: ScheduleRepository,
+) -> None:
+    await callback.answer(f"Неделя {callback_data.week}")
+    schedule = schedule_repo.load()
+    text = (
+        format_schedule_week(callback_data.week, schedule)
+        + "\n\n<em>Выберите нужную учебную неделю с помощью кнопок ниже.</em>"
+    )
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=build_week_view_keyboard(callback_data.week),
+        )
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
+
+
+@router.message(Command("notify"))
+@router.message(Command("reminders"))
+@router.message(F.text.casefold() == "напоминания")
+async def handle_reminders_command(
+    message: Message,
+    user_repo: UserRepository,
+) -> None:
+    reminders = user_repo.get_reminders(message.chat.id)
+    text = _format_reminders_message(reminders)
+    await message.answer(text, reply_markup=build_reminders_keyboard(reminders))
+
+
+@router.callback_query(ReminderToggleCallback.filter())
+async def handle_reminder_toggle(
+    callback: CallbackQuery,
+    callback_data: ReminderToggleCallback,
+    user_repo: UserRepository,
+) -> None:
+    chat_id = callback.message.chat.id if callback.message else callback.from_user.id
+
+    if callback_data.kind == "all":
+        reminders = user_repo.clear_reminders(chat_id)
+        await callback.answer("Все напоминания отключены.")
+    else:
+        reminders = user_repo.toggle_reminder(chat_id, callback_data.kind)
+        label = "Утреннее" if callback_data.kind == "morning" else "Вечернее"
+        status = "включено" if reminders.get(callback_data.kind) else "выключено"
+        await callback.answer(f"{label} напоминание {status}.")
+
+    text = _format_reminders_message(reminders)
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=build_reminders_keyboard(reminders),
+        )
+    except TelegramBadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            raise
 
 
 @router.message(Command("edit"))

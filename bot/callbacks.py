@@ -7,6 +7,10 @@ class WeekCallback(CallbackData, prefix="week"):
     week: int
 
 
+class WeekViewCallback(CallbackData, prefix="view_week"):
+    week: int
+
+
 class DayCallback(CallbackData, prefix="day"):
     week: int
     day: str
@@ -24,4 +28,15 @@ class FieldCallback(CallbackData, prefix="field"):
     field: str
 
 
-__all__ = ["WeekCallback", "DayCallback", "EventCallback", "FieldCallback"]
+class ReminderToggleCallback(CallbackData, prefix="remind"):
+    kind: str
+
+
+__all__ = [
+    "WeekCallback",
+    "WeekViewCallback",
+    "DayCallback",
+    "EventCallback",
+    "FieldCallback",
+    "ReminderToggleCallback",
+]

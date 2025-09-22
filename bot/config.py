@@ -16,8 +16,10 @@ class Settings:
     schedule_path: Path
     users_path: Path
     timezone: ZoneInfo
-    daily_push_hour: int = 7
-    daily_push_minute: int = 0
+    morning_push_hour: int = 7
+    morning_push_minute: int = 0
+    evening_push_hour: int = 20
+    evening_push_minute: int = 0
 
 
 def _load_bot_token(config_path: Path) -> str:
