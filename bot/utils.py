@@ -21,7 +21,7 @@ DAY_ALIASES = {name.lower(): name for name in DAY_INDEX_TO_NAME.values()}
 ACADEMIC_YEAR_START_MONTH = 9
 ACADEMIC_YEAR_START_DAY = 1
 
-_LESSON_INDENT = "&nbsp;" * 4
+_LESSON_INDENT = "\u00A0" * 2
 
 
 def get_day_name_for_date(target_date: date) -> str:
@@ -135,7 +135,7 @@ def _filter_events_for_week(
 def _format_lesson_block(index: int, lesson: dict[str, Any]) -> List[str]:
     subject = escape(str(lesson.get("subject") or "Без названия"))
     time = escape(str(lesson.get("time") or "—"))
-    lines: List[str] = [f"<b>{index}. {subject}</b>"]
+    lines: List[str] = [f"{index}. {subject}"]
     lines.append(f"{_LESSON_INDENT}⏰ {time}")
 
     group = lesson.get("group")
@@ -151,7 +151,7 @@ def _format_lesson_block(index: int, lesson: dict[str, Any]) -> List[str]:
         lines.append(f"{_LESSON_INDENT}👨‍🏫 {escape(str(teacher))}")
 
     weeks_text = escape(format_weeks(lesson.get("weeks", [])))
-    lines.append(f"{_LESSON_INDENT}🗓️ Недели: <code>{weeks_text}</code>")
+    lines.append(f"{_LESSON_INDENT}🗓️ Недели: {weeks_text}")
     return lines
 
 
@@ -216,7 +216,7 @@ def format_schedule_day(
 
 def format_schedule_week(week_number: int, schedule: ScheduleData) -> str:
     lines: List[str] = [
-        f"<b>Расписание на {escape(str(week_number))}-ю учебную неделю</b>",
+        f"📅 Расписание на {escape(str(week_number))}-ю учебную неделю",
         "",
     ]
     for index in range(7):
@@ -225,7 +225,7 @@ def format_schedule_week(week_number: int, schedule: ScheduleData) -> str:
             day,
             week_number,
             schedule,
-            header_template="<b>{title}</b>",
+            header_template="🗓 {title}",
         )
         lines.extend(day_lines)
         lines.append("")
