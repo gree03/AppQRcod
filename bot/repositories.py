@@ -226,11 +226,26 @@ class ScheduleRepository:
     def list_days(self) -> Iterable[str]:
         return self.load().keys()
 
-DEFAULT_REMINDERS = {"morning": False, "evening": False}
+REMINDER_KEYS = ("morning", "evening")
+SCOPE_CHAT = "chat"
+SCOPE_USER = "user"
+REMINDER_SCOPES = {SCOPE_CHAT, SCOPE_USER}
+
+
+def _default_reminders(scope: str) -> Dict[str, bool]:
+    """Return default reminder configuration for the given scope."""
+
+    if scope == SCOPE_CHAT:
+        # Chats (групповые беседы) получают рассылку по умолчанию.
+        return {"morning": True, "evening": True}
+    if scope == SCOPE_USER:
+        # Для личных напоминаний значения отключены до явного включения.
+        return {"morning": False, "evening": False}
+    raise ValueError(f"Неизвестный тип напоминаний: {scope}")
 
 
 class UserRepository:
-    """JSON-based storage for chat identifiers and reminder preferences."""
+    """JSON-based storage for chat and user reminder preferences."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -238,8 +253,25 @@ class UserRepository:
         if not self._path.exists():
             self._save_entries([])
 
-    def _empty_entry(self, chat_id: int) -> Dict[str, Any]:
-        entry = {"chat_id": int(chat_id), "reminders": dict(DEFAULT_REMINDERS)}
+    def _empty_entry(
+        self,
+        *,
+        chat_id: int,
+        scope: str,
+        user_id: int | None = None,
+    ) -> Dict[str, Any]:
+        if scope not in REMINDER_SCOPES:
+            raise ValueError(f"Неизвестный тип напоминаний: {scope}")
+
+        entry: Dict[str, Any] = {
+            "chat_id": int(chat_id),
+            "scope": scope,
+            "reminders": dict(_default_reminders(scope)),
+        }
+
+        if scope == SCOPE_USER:
+            entry["user_id"] = int(user_id if user_id is not None else chat_id)
+
         return entry
 
     def _load_entries(self) -> List[Dict[str, Any]]:
@@ -255,8 +287,12 @@ class UserRepository:
         entries: List[Dict[str, Any]] = []
         for item in raw:
             if isinstance(item, int):
-                entries.append(self._empty_entry(item))
+                scope = SCOPE_CHAT if item < 0 else SCOPE_USER
+                entries.append(
+                    self._empty_entry(chat_id=item, scope=scope, user_id=item if scope == SCOPE_USER else None)
+                )
                 continue
+
             if not isinstance(item, dict):
                 continue
 
@@ -266,17 +302,39 @@ class UserRepository:
             except (TypeError, ValueError):
                 continue
 
-            entry = self._empty_entry(chat_id_int)
+            raw_scope = item.get("scope") or item.get("type")
+            if raw_scope in REMINDER_SCOPES:
+                scope = raw_scope
+            else:
+                scope = SCOPE_CHAT if chat_id_int < 0 else SCOPE_USER
+
+            user_id: int | None = None
+            if scope == SCOPE_USER:
+                stored_user_id = item.get("user_id")
+                try:
+                    user_id = int(stored_user_id) if stored_user_id is not None else chat_id_int
+                except (TypeError, ValueError):
+                    user_id = chat_id_int
+
+            entry = self._empty_entry(chat_id=chat_id_int, scope=scope, user_id=user_id)
+
             reminders = item.get("reminders")
             if isinstance(reminders, dict):
                 for key in entry["reminders"].keys():
                     if key in reminders:
                         entry["reminders"][key] = bool(reminders[key])
+
             entries.append(entry)
 
-        unique: Dict[int, Dict[str, Any]] = {}
+        unique: Dict[tuple[int, str, int | None], Dict[str, Any]] = {}
         for entry in entries:
-            unique[entry["chat_id"]] = entry
+            key = (
+                entry["chat_id"],
+                entry.get("scope", SCOPE_CHAT),
+                entry.get("user_id") if entry.get("scope") == SCOPE_USER else None,
+            )
+            unique[key] = entry
+
         return list(unique.values())
 
     def _save_entries(self, entries: Iterable[Dict[str, Any]]) -> None:
@@ -284,64 +342,145 @@ class UserRepository:
             json.dump(list(entries), fp, ensure_ascii=False, indent=2)
 
     def _ensure_entry(
-        self, chat_id: int, entries: List[Dict[str, Any]] | None = None
+        self,
+        *,
+        chat_id: int,
+        scope: str,
+        user_id: int | None = None,
+        entries: List[Dict[str, Any]] | None = None,
     ) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
         chat_id = int(chat_id)
         if entries is None:
             entries = self._load_entries()
+
+        target_user_id = int(user_id) if scope == SCOPE_USER and user_id is not None else (
+            int(chat_id) if scope == SCOPE_USER else None
+        )
+
         for entry in entries:
-            if entry["chat_id"] == chat_id:
-                return entries, entry
-        entry = self._empty_entry(chat_id)
+            if entry["chat_id"] != chat_id:
+                continue
+            if entry.get("scope", SCOPE_CHAT) != scope:
+                continue
+            if scope == SCOPE_USER and entry.get("user_id") != target_user_id:
+                continue
+            return entries, entry
+
+        entry = self._empty_entry(chat_id=chat_id, scope=scope, user_id=target_user_id)
         entries.append(entry)
         return entries, entry
 
-    def add_user(self, chat_id: int) -> None:
-        entries, _ = self._ensure_entry(chat_id)
+    def register_chat(self, chat_id: int) -> None:
+        entries, _ = self._ensure_entry(chat_id=chat_id, scope=SCOPE_CHAT)
         self._save_entries(entries)
 
-    def list_users(self) -> List[int]:
-        return [entry["chat_id"] for entry in self._load_entries()]
+    def register_user(self, user_id: int) -> None:
+        entries, _ = self._ensure_entry(chat_id=user_id, scope=SCOPE_USER, user_id=user_id)
+        self._save_entries(entries)
 
-    def get_reminders(self, chat_id: int) -> Dict[str, bool]:
-        entries, entry = self._ensure_entry(chat_id)
+    def add_user(self, chat_id: int) -> None:
+        # Backwards compatibility: treat as registration of chat context.
+        self.register_chat(chat_id)
+
+    def list_users(self) -> List[int]:
+        return [
+            entry.get("user_id", entry["chat_id"])
+            for entry in self._load_entries()
+            if entry.get("scope", SCOPE_CHAT) == SCOPE_USER
+        ]
+
+    def get_reminders(
+        self,
+        chat_id: int,
+        *,
+        scope: str = SCOPE_CHAT,
+        user_id: int | None = None,
+    ) -> Dict[str, bool]:
+        entries, entry = self._ensure_entry(chat_id=chat_id, scope=scope, user_id=user_id)
         self._save_entries(entries)
         return dict(entry["reminders"])
 
-    def set_reminder(self, chat_id: int, kind: str, enabled: bool) -> Dict[str, bool]:
-        if kind not in DEFAULT_REMINDERS:
+    def set_reminder(
+        self,
+        chat_id: int,
+        kind: str,
+        enabled: bool,
+        *,
+        scope: str = SCOPE_CHAT,
+        user_id: int | None = None,
+    ) -> Dict[str, bool]:
+        if kind not in REMINDER_KEYS:
             raise KeyError(f"Неизвестный тип напоминания: {kind}")
         entries = self._load_entries()
-        entries, entry = self._ensure_entry(chat_id, entries)
+        entries, entry = self._ensure_entry(
+            chat_id=chat_id,
+            scope=scope,
+            user_id=user_id,
+            entries=entries,
+        )
         entry["reminders"][kind] = bool(enabled)
         self._save_entries(entries)
         return dict(entry["reminders"])
 
-    def toggle_reminder(self, chat_id: int, kind: str) -> Dict[str, bool]:
-        if kind not in DEFAULT_REMINDERS:
+    def toggle_reminder(
+        self,
+        chat_id: int,
+        kind: str,
+        *,
+        scope: str = SCOPE_CHAT,
+        user_id: int | None = None,
+    ) -> Dict[str, bool]:
+        if kind not in REMINDER_KEYS:
             raise KeyError(f"Неизвестный тип напоминания: {kind}")
         entries = self._load_entries()
-        entries, entry = self._ensure_entry(chat_id, entries)
+        entries, entry = self._ensure_entry(
+            chat_id=chat_id,
+            scope=scope,
+            user_id=user_id,
+            entries=entries,
+        )
         entry["reminders"][kind] = not entry["reminders"].get(kind, False)
         self._save_entries(entries)
         return dict(entry["reminders"])
 
-    def clear_reminders(self, chat_id: int) -> Dict[str, bool]:
+    def clear_reminders(
+        self,
+        chat_id: int,
+        *,
+        scope: str = SCOPE_CHAT,
+        user_id: int | None = None,
+    ) -> Dict[str, bool]:
         entries = self._load_entries()
-        entries, entry = self._ensure_entry(chat_id, entries)
-        for key in DEFAULT_REMINDERS:
+        entries, entry = self._ensure_entry(
+            chat_id=chat_id,
+            scope=scope,
+            user_id=user_id,
+            entries=entries,
+        )
+        for key in entry["reminders"].keys():
             entry["reminders"][key] = False
         self._save_entries(entries)
         return dict(entry["reminders"])
 
-    def list_reminder_chats(self, kind: str) -> List[int]:
-        if kind not in DEFAULT_REMINDERS:
+    def list_reminder_chats(
+        self,
+        kind: str,
+        *,
+        scopes: Iterable[str] | None = None,
+    ) -> List[int]:
+        if kind not in REMINDER_KEYS:
             raise KeyError(f"Неизвестный тип напоминания: {kind}")
-        return [
-            entry["chat_id"]
-            for entry in self._load_entries()
-            if entry["reminders"].get(kind)
-        ]
+
+        allowed_scopes = set(scopes or REMINDER_SCOPES)
+        entries = self._load_entries()
+        result: List[int] = []
+        for entry in entries:
+            scope = entry.get("scope", SCOPE_CHAT)
+            if scope not in allowed_scopes:
+                continue
+            if entry["reminders"].get(kind):
+                result.append(entry["chat_id"])
+        return result
 
 
 __all__ = ["ScheduleRepository", "UserRepository", "ScheduleData"]

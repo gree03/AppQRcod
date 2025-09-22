@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from aiogram import F, Router
+from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -41,8 +42,37 @@ from .utils import (
 
 router = Router()
 
+EDITOR_IDS = {
+    803109062: "@Greegan03",
+    873464374: "@SergoBranches",
+    1890386067: "@EKiritoo",
+}
+ALLOWED_EDITOR_IDS = set(EDITOR_IDS.keys())
+REMINDER_SCOPE_CHAT = "chat"
+REMINDER_SCOPE_USER = "user"
 
-def _format_reminders_message(reminders: dict[str, bool]) -> str:
+
+def _join_with_and(labels: list[str]) -> str:
+    if not labels:
+        return ""
+    if len(labels) == 1:
+        return labels[0]
+    return ", ".join(labels[:-1]) + f" и {labels[-1]}"
+
+
+EDITOR_NAMES_TEXT = _join_with_and(list(EDITOR_IDS.values()))
+EDITOR_DENIED_MESSAGE = (
+    f"Изменять расписание могут только {EDITOR_NAMES_TEXT}."
+    if EDITOR_NAMES_TEXT
+    else "Изменение расписания недоступно."
+)
+
+
+def _has_edit_permission(user_id: int | None) -> bool:
+    return user_id in ALLOWED_EDITOR_IDS if user_id is not None else False
+
+
+def _format_reminders_message(reminders: dict[str, bool], *, personal: bool) -> str:
     morning = "✅ включено" if reminders.get("morning") else "❌ выключено"
     evening = "✅ включено" if reminders.get("evening") else "❌ выключено"
     lines = [
@@ -51,11 +81,34 @@ def _format_reminders_message(reminders: dict[str, bool]) -> str:
         f"⏰ <b>07:00</b> — на сегодня: {morning}",
         f"🌙 <b>20:00</b> — на завтра: {evening}",
         "",
+    ]
+    if personal:
+        lines.append(
+            "Настройки действуют только для вас: бот пришлёт расписание в личные сообщения."
+        )
+        lines.append(
+            "Используйте кнопки ниже, чтобы включить или отключить нужные напоминания."
+        )
+    else:
+        lines.append(
+            "Напоминания для беседы используют настройки по умолчанию и не изменяются."
+        )
+    return "\n".join(lines)
+
+
+def _format_group_reminders_message(reminders: dict[str, bool]) -> str:
+    morning = "✅ включено" if reminders.get("morning") else "❌ выключено"
+    evening = "✅ включено" if reminders.get("evening") else "❌ выключено"
+    lines = [
+        "<b>Напоминания для беседы</b>",
+        "",
+        f"⏰ <b>07:00</b> — на сегодня: {morning}",
+        f"🌙 <b>20:00</b> — на завтра: {evening}",
+        "",
         (
-            "Напоминания работают и в беседах: бот отправит расписание "
-            "автоматически."
+            "Личные напоминания каждый студент может настроить в чате с ботом: "
+            "отправьте команду /notify в личные сообщения."
         ),
-        "Используйте кнопки ниже, чтобы включить или отключить нужные напоминания.",
     ]
     return "\n".join(lines)
 
@@ -83,7 +136,10 @@ async def handle_start(
     message: Message,
     user_repo: UserRepository,
 ) -> None:
-    user_repo.add_user(message.chat.id)
+    if message.chat.type == ChatType.PRIVATE and message.from_user:
+        user_repo.register_user(message.from_user.id)
+    else:
+        user_repo.register_chat(message.chat.id)
     greeting = (
         "Привет! Я бот расписания БГАУ для 3 курса направления 35.03.06.\n\n"
         "Доступные команды:\n"
@@ -173,9 +229,25 @@ async def handle_reminders_command(
     message: Message,
     user_repo: UserRepository,
 ) -> None:
-    reminders = user_repo.get_reminders(message.chat.id)
-    text = _format_reminders_message(reminders)
-    await message.answer(text, reply_markup=build_reminders_keyboard(reminders))
+    if message.chat.type == ChatType.PRIVATE and message.from_user:
+        user_id = message.from_user.id
+        user_repo.register_user(user_id)
+        reminders = user_repo.get_reminders(
+            user_id,
+            scope=REMINDER_SCOPE_USER,
+            user_id=user_id,
+        )
+        text = _format_reminders_message(reminders, personal=True)
+        await message.answer(text, reply_markup=build_reminders_keyboard(reminders))
+        return
+
+    user_repo.register_chat(message.chat.id)
+    reminders = user_repo.get_reminders(
+        message.chat.id,
+        scope=REMINDER_SCOPE_CHAT,
+    )
+    text = _format_group_reminders_message(reminders)
+    await message.answer(text)
 
 
 @router.callback_query(ReminderToggleCallback.filter())
@@ -184,20 +256,42 @@ async def handle_reminder_toggle(
     callback_data: ReminderToggleCallback,
     user_repo: UserRepository,
 ) -> None:
-    chat_id = callback.message.chat.id if callback.message else callback.from_user.id
+    message = callback.message
+    if message is None:
+        await callback.answer("Сообщение недоступно.", show_alert=True)
+        return
+
+    if message.chat.type != ChatType.PRIVATE:
+        await callback.answer(
+            "Напоминания для беседы изменяются автоматически.",
+            show_alert=True,
+        )
+        return
+
+    user_id = callback.from_user.id
+    user_repo.register_user(user_id)
 
     if callback_data.kind == "all":
-        reminders = user_repo.clear_reminders(chat_id)
+        reminders = user_repo.clear_reminders(
+            user_id,
+            scope=REMINDER_SCOPE_USER,
+            user_id=user_id,
+        )
         await callback.answer("Все напоминания отключены.")
     else:
-        reminders = user_repo.toggle_reminder(chat_id, callback_data.kind)
+        reminders = user_repo.toggle_reminder(
+            user_id,
+            callback_data.kind,
+            scope=REMINDER_SCOPE_USER,
+            user_id=user_id,
+        )
         label = "Утреннее" if callback_data.kind == "morning" else "Вечернее"
         status = "включено" if reminders.get(callback_data.kind) else "выключено"
         await callback.answer(f"{label} напоминание {status}.")
 
-    text = _format_reminders_message(reminders)
+    text = _format_reminders_message(reminders, personal=True)
     try:
-        await callback.message.edit_text(
+        await message.edit_text(
             text,
             reply_markup=build_reminders_keyboard(reminders),
         )
@@ -209,6 +303,12 @@ async def handle_reminder_toggle(
 @router.message(Command("edit"))
 @router.message(F.text == "Изменить расписание")
 async def handle_edit_command(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    if not _has_edit_permission(user_id):
+        await state.clear()
+        await message.answer(EDITOR_DENIED_MESSAGE, reply_markup=main_menu_keyboard())
+        return
+
     await state.clear()
     await state.set_state(EditScheduleStates.choosing_week)
     await message.answer(
@@ -234,6 +334,11 @@ async def handle_choose_week(
     schedule_repo: ScheduleRepository,
     state: FSMContext,
 ) -> None:
+    if not _has_edit_permission(callback.from_user.id):
+        await state.clear()
+        await callback.answer(EDITOR_DENIED_MESSAGE, show_alert=True)
+        return
+
     await callback.answer()
     schedule = schedule_repo.load()
     days = [day for day in schedule.keys() if day != "ВОСКРЕСЕНЬЕ"]
@@ -252,6 +357,11 @@ async def handle_choose_day(
     schedule_repo: ScheduleRepository,
     state: FSMContext,
 ) -> None:
+    if not _has_edit_permission(callback.from_user.id):
+        await state.clear()
+        await callback.answer(EDITOR_DENIED_MESSAGE, show_alert=True)
+        return
+
     await callback.answer()
     schedule = schedule_repo.load()
     days = [day for day in schedule.keys() if day != "ВОСКРЕСЕНЬЕ"]
@@ -301,6 +411,11 @@ async def handle_choose_event(
     schedule_repo: ScheduleRepository,
     state: FSMContext,
 ) -> None:
+    if not _has_edit_permission(callback.from_user.id):
+        await state.clear()
+        await callback.answer(EDITOR_DENIED_MESSAGE, show_alert=True)
+        return
+
     await callback.answer()
     schedule = schedule_repo.load()
     lessons = schedule.get(callback_data.day, [])
@@ -347,6 +462,11 @@ async def handle_choose_field(
     callback_data: FieldCallback,
     state: FSMContext,
 ) -> None:
+    if not _has_edit_permission(callback.from_user.id):
+        await state.clear()
+        await callback.answer(EDITOR_DENIED_MESSAGE, show_alert=True)
+        return
+
     await callback.answer()
     await state.update_data(field=callback_data.field)
     await state.set_state(EditScheduleStates.entering_value)
@@ -371,6 +491,12 @@ async def handle_new_value(
     schedule_repo: ScheduleRepository,
     state: FSMContext,
 ) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    if not _has_edit_permission(user_id):
+        await state.clear()
+        await message.answer(EDITOR_DENIED_MESSAGE, reply_markup=main_menu_keyboard())
+        return
+
     data = await state.get_data()
     day = data.get("day")
     index = data.get("event_index")

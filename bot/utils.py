@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+import logging
+import re
+from datetime import date, datetime, timedelta
 from html import escape
 from typing import Any, Iterable, List, Sequence
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from .repositories import ScheduleData
 
@@ -22,6 +26,67 @@ ACADEMIC_YEAR_START_MONTH = 9
 ACADEMIC_YEAR_START_DAY = 1
 
 _LESSON_INDENT = "\u00A0" * 2
+_WEEK_SOURCE_URL = (
+    "https://www.bsau.ru/obrazovanie/raspisanie/?FAKULTET=1257&NAPR=48&KURS=3"
+    "&LEVEL_EDUCATION=165&FORM_EDUCATION=169"
+)
+_WEEK_NUMBER_PATTERN = re.compile(r"<span\s+id=\"info33\"[^>]*><b>(\d+)</b>", re.IGNORECASE)
+_WEEK_CACHE_TTL = timedelta(minutes=30)
+_week_cache: dict[str, Any] = {"timestamp": None, "value": None}
+_logger = logging.getLogger(__name__)
+
+
+def _fetch_week_number_from_site(timeout: float = 10.0) -> int:
+    request = Request(
+        _WEEK_SOURCE_URL,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; ScheduleBot/1.0)",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
+    with urlopen(request, timeout=timeout) as response:  # nosec B310 - trusted source
+        raw_body = response.read()
+        encoding = response.headers.get_content_charset() if response.headers else None
+
+    try:
+        html_text = raw_body.decode(encoding or "utf-8", errors="ignore")
+    except LookupError:
+        html_text = raw_body.decode("utf-8", errors="ignore")
+
+    match = _WEEK_NUMBER_PATTERN.search(html_text)
+    if not match:
+        raise ValueError("Не удалось найти номер учебной недели на странице БГАУ.")
+
+    return int(match.group(1))
+
+
+def get_remote_week_number(force: bool = False) -> int | None:
+    now = datetime.now()
+    cached_value = _week_cache.get("value")
+    cached_timestamp = _week_cache.get("timestamp")
+    if (
+        not force
+        and isinstance(cached_timestamp, datetime)
+        and now - cached_timestamp <= _WEEK_CACHE_TTL
+    ):
+        return cached_value
+
+    try:
+        value = _fetch_week_number_from_site()
+    except (URLError, ValueError, OSError) as exc:
+        if cached_value is not None:
+            _logger.warning(
+                "Не удалось обновить номер учебной недели: %s. Использую кэш %s.",
+                exc,
+                cached_value,
+            )
+            return cached_value
+        _logger.warning("Не удалось получить номер учебной недели: %s", exc)
+        return None
+
+    _week_cache["timestamp"] = now
+    _week_cache["value"] = value
+    return value
 
 
 def get_day_name_for_date(target_date: date) -> str:
@@ -55,7 +120,7 @@ def get_academic_year_start(target_date: date) -> date:
     return start_candidate + timedelta(days=offset)
 
 
-def get_academic_week_number(target_date: date) -> int:
+def _calculate_week_number_from_september(target_date: date) -> int:
     """Return the academic week number counting from the first Monday of September."""
     start = get_academic_year_start(target_date)
     if target_date < start:
@@ -63,6 +128,22 @@ def get_academic_week_number(target_date: date) -> int:
 
     days_passed = (target_date - start).days
     return days_passed // 7 + 1
+
+
+def get_academic_week_number(target_date: date) -> int:
+    """Return the academic week number using the BGAU website as a reference."""
+
+    today = date.today()
+    current_week_local = _calculate_week_number_from_september(today)
+    target_week_local = _calculate_week_number_from_september(target_date)
+
+    remote_week = get_remote_week_number()
+    if remote_week is None:
+        return target_week_local
+
+    delta = target_week_local - current_week_local
+    calculated = remote_week + delta
+    return max(1, calculated)
 
 
 def format_weeks(weeks: Iterable[int]) -> str:
@@ -241,6 +322,7 @@ __all__ = [
     "format_weeks",
     "get_academic_week_number",
     "get_academic_year_start",
+    "get_remote_week_number",
     "get_day_name_for_date",
     "normalize_day_name",
     "parse_weeks",
